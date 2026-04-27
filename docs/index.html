@@ -95,7 +95,8 @@
         color: #d0dcf7;
       }
 
-      input {
+      input,
+      select {
         width: 100%;
         border: 1px solid #3a4666;
         background: #111a2f;
@@ -241,7 +242,7 @@
 
       .contact-row {
         display: grid;
-        grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto;
+        grid-template-columns: minmax(0, 0.8fr) minmax(0, 1fr) minmax(0, 1fr) auto;
         gap: 8px;
         align-items: end;
         padding: 10px;
@@ -608,6 +609,28 @@
         var CLIENT_ID_PLACEHOLDER = "YOUR_ENTRA_APP_CLIENT_ID_HERE";
         var CLIENT_ID_REGEX =
           /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;
+        var CONTACT_EMOJI_DEFAULT = "1F4AC";
+        var CONTACT_EMOJI_CHOICES = [
+          { code: "", label: "Default" },
+          { code: "1F4AC", label: "Speech" },
+          { code: "1F4DE", label: "Phone" },
+          { code: "1F4F1", label: "Mobile" },
+          { code: "2709", label: "Mail" },
+          { code: "1F603", label: "Smile" },
+          { code: "1F389", label: "Celebrate" },
+          { code: "1F44D", label: "Thumbs Up" },
+          { code: "2764", label: "Heart" },
+          { code: "1F4E2", label: "Megaphone" },
+          { code: "1F512", label: "Lock" },
+        ];
+        var CONTACT_EMOJI_LOOKUP = {};
+
+        for (var emojiIdx = 0; emojiIdx < CONTACT_EMOJI_CHOICES.length; emojiIdx++) {
+          var emojiCode = CONTACT_EMOJI_CHOICES[emojiIdx].code;
+          if (emojiCode) {
+            CONTACT_EMOJI_LOOKUP[emojiCode] = true;
+          }
+        }
 
         var currentSettings = {
           contacts: [],
@@ -658,6 +681,10 @@
           return (getParam("scope") || DEFAULT_SCOPE).trim();
         }
 
+        function shouldAutoPersistAfterAuth() {
+          return (getParam("auto_persist") || "") === "1";
+        }
+
         function normalizeCustomClientId(value) {
           var v = String(value || "").trim();
           if (!v || v === PROVIDED_CLIENT_ID) {
@@ -675,6 +702,62 @@
           return v;
         }
 
+        function emojiFromCodepoint(code) {
+          if (!code || typeof String.fromCodePoint !== "function") {
+            return "";
+          }
+
+          try {
+            return String.fromCodePoint(parseInt(code, 16));
+          } catch (e) {
+            return "";
+          }
+        }
+
+        function normalizeEmojiCodepoint(code) {
+          var v = String(code || "").trim().toUpperCase();
+          if (!v) {
+            return "";
+          }
+
+          return CONTACT_EMOJI_LOOKUP[v] ? v : "";
+        }
+
+        function normalizeContacts(contacts) {
+          var list = Array.isArray(contacts) ? contacts : [];
+          var normalized = [];
+
+          for (var i = 0; i < list.length; i++) {
+            var c = list[i] || {};
+            normalized.push({
+              name: String(c.name || "").trim(),
+              phone: String(c.phone || "").trim(),
+              emoji: normalizeEmojiCodepoint(c.emoji),
+            });
+          }
+
+          return normalized;
+        }
+
+        function populateEmojiSelect(select) {
+          if (!select) {
+            return;
+          }
+
+          select.innerHTML = "";
+          for (var i = 0; i < CONTACT_EMOJI_CHOICES.length; i++) {
+            var optionData = CONTACT_EMOJI_CHOICES[i];
+            var option = document.createElement("option");
+            option.value = optionData.code;
+
+            var prefix = optionData.code
+              ? emojiFromCodepoint(optionData.code) + " "
+              : emojiFromCodepoint(CONTACT_EMOJI_DEFAULT) + " ";
+            option.textContent = prefix + optionData.label;
+            select.appendChild(option);
+          }
+        }
+
         function updateContactsEmptyHint() {
           var list = document.getElementById("contactsList");
           var hint = document.getElementById("contactsEmpty");
@@ -689,6 +772,10 @@
           row.className = "contact-row";
           row.innerHTML = [
             '<div class="field">',
+            "<label>Emoji</label>",
+            '<select class="contact-emoji"></select>',
+            "</div>",
+            '<div class="field">',
             "<label>Contact Name</label>",
             '<input type="text" class="contact-name" placeholder="Alice" />',
             "</div>",
@@ -698,6 +785,11 @@
             "</div>",
             '<button type="button" class="secondary remove-contact">Remove</button>',
           ].join("");
+
+          var emojiSelect = row.querySelector(".contact-emoji");
+          populateEmojiSelect(emojiSelect);
+          var selectedEmoji = normalizeEmojiCodepoint(contact && contact.emoji);
+          emojiSelect.value = selectedEmoji;
 
           row.querySelector(".contact-name").value =
             contact && contact.name ? contact.name : "";
@@ -787,9 +879,7 @@
           if (!obj || typeof obj !== "object") {
             return;
           }
-          currentSettings.contacts = Array.isArray(obj.contacts)
-            ? obj.contacts
-            : [];
+          currentSettings.contacts = normalizeContacts(obj.contacts);
           currentSettings.graph = obj.graph || {};
           currentSettings.targetEmail = obj.targetEmail || "";
           currentSettings.quitAfterSend = !!obj.quitAfterSend;
@@ -866,12 +956,16 @@
 
           var rows = document.querySelectorAll("#contactsList .contact-row");
           for (var i = 0; i < rows.length; i++) {
+            var emojiSelect = rows[i].querySelector(".contact-emoji");
             var nameInput = rows[i].querySelector(".contact-name");
             var phoneInput = rows[i].querySelector(".contact-phone");
+            var emoji = normalizeEmojiCodepoint(
+              emojiSelect ? emojiSelect.value : "",
+            );
             var name = nameInput ? nameInput.value.trim() : "";
             var phone = phoneInput ? phoneInput.value.trim() : "";
             if (name && phone) {
-              settings.contacts.push({ name: name, phone: phone });
+              settings.contacts.push({ name: name, phone: phone, emoji: emoji });
             }
           }
 
@@ -984,6 +1078,13 @@
 
                 updateReturnLink();
                 renderAuthStatus();
+
+                if (shouldAutoPersistAfterAuth()) {
+                  setAuthStatus(
+                    "Signed in. Tokens saved. Press Save to return to Pebble.",
+                    true,
+                  );
+                }
 
                 // Clean the URL after callback to avoid re-processing on refresh.
                 if (window.history && window.history.replaceState) {

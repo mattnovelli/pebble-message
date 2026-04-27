@@ -106,6 +106,7 @@ Notes:
 6. Hosted page returns full settings JSON to Pebble via:
    - `pebblejs://close#<encoded-json>`
 7. PKJS saves settings and continues using refresh tokens for renewal.
+8. When auth state is reauth-required, a successful sign-in auto-saves refreshed tokens in the page draft while keeping the settings page open.
 
 ### Token Renewal Behavior (Updated)
 

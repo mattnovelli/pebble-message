@@ -1,5 +1,6 @@
 #include <pebble.h>
 #include <string.h>
+#include <ctype.h>
 
 #define KEY_CONTACT_INDEX 0
 #define KEY_VOICE_TEXT    1
@@ -7,30 +8,51 @@
 #define KEY_STATUS        3
 #define KEY_CONTACT_NAMES 4
 #define KEY_QUIT_AFTER_SEND 5
+#define KEY_AUTH_STATE 6
+
+#define AUTH_STATE_UNKNOWN 0
+#define AUTH_STATE_OK 1
+#define AUTH_STATE_REAUTH_REQUIRED 2
 
 #define SENT_STATUS_PREFIX "Email sent"
 #define SENT_ANIM_DELTA_MS 33
 #define SENT_ANIM_END_HOLD_MS 450
+#define SENT_FALLBACK_HOLD_MS 950
+#define ERROR_MODAL_DISMISS_MS 3000
+
+typedef enum {
+  AppAuthStateUnknown = AUTH_STATE_UNKNOWN,
+  AppAuthStateOk = AUTH_STATE_OK,
+  AppAuthStateReauthRequired = AUTH_STATE_REAUTH_REQUIRED,
+} AppAuthState;
 
 static Window *s_main_window;
 static MenuLayer *s_menu_layer;
 static Layer *s_empty_state_layer;
+static Window *s_sent_modal_window;
+static Layer *s_sent_modal_layer;
+static Window *s_error_modal_window;
+static Layer *s_error_modal_layer;
 
 // Contact list received from JS (names only); emails live on the phone side
 static char **s_contacts = NULL;
 static int s_contact_count = 0;
 static bool s_contacts_loaded = false;
+static AppAuthState s_auth_state = AppAuthStateUnknown;
 static bool s_quit_after_send_enabled = false;
 static bool s_pending_quit_after_send = false;
 
 static DictationSession *s_dictation;
 static int s_selected_index = -1;
+static AppTimer *s_sent_modal_hide_timer;
+static AppTimer *s_error_modal_timer;
+static bool s_sent_modal_visible = false;
+static bool s_error_modal_visible = false;
+static char s_error_modal_message[96] = "Message could not be sent.";
 
 #ifdef PBL_COLOR
-static Layer *s_sent_anim_layer;
 static GDrawCommandSequence *s_sent_sequence;
 static AppTimer *s_sent_anim_timer;
-static AppTimer *s_sent_anim_hide_timer;
 static int s_sent_anim_frame = 0;
 static bool s_sent_animating = false;
 #endif
@@ -51,7 +73,125 @@ static GColor app_accent_color(void) {
 #endif
 }
 
+static GColor app_error_bg_color(void) {
+#ifdef PBL_COLOR
+  return GColorFromRGB(138, 26, 26);
+#else
+  return GColorBlack;
+#endif
+}
+
+static bool contains_case_insensitive(const char *text, const char *needle) {
+  if (!text || !needle || !*needle) {
+    return false;
+  }
+
+  size_t needle_len = strlen(needle);
+  for (const char *cursor = text; *cursor; cursor++) {
+    size_t i = 0;
+    while (i < needle_len && cursor[i]) {
+      char a = (char)tolower((unsigned char)cursor[i]);
+      char b = (char)tolower((unsigned char)needle[i]);
+      if (a != b) {
+        break;
+      }
+      i++;
+    }
+
+    if (i == needle_len) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+static void summarize_error_message(const char *raw_message, char *dest, size_t dest_len) {
+  if (!dest || dest_len == 0) {
+    return;
+  }
+
+  const char *summary = "Message could not be sent.";
+  if (raw_message) {
+    if (contains_case_insensitive(raw_message, "sign in") ||
+        contains_case_insensitive(raw_message, "session expired") ||
+        contains_case_insensitive(raw_message, "auth")) {
+      summary = "Sign in required. Re-open Patch settings.";
+    } else if (contains_case_insensitive(raw_message, "network") ||
+               contains_case_insensitive(raw_message, "timeout")) {
+      summary = "Connection issue. Check phone network and retry.";
+    } else if (contains_case_insensitive(raw_message, "permission")) {
+      summary = "Permission denied for Outlook send.";
+    } else if (contains_case_insensitive(raw_message, "contact")) {
+      summary = "Contact data is invalid. Update settings.";
+    }
+  }
+
+  strncpy(dest, summary, dest_len - 1);
+  dest[dest_len - 1] = '\0';
+}
+
+static void cancel_error_modal_timer(void) {
+  if (!s_error_modal_timer) {
+    return;
+  }
+
+  app_timer_cancel(s_error_modal_timer);
+  s_error_modal_timer = NULL;
+}
+
+static void dismiss_error_modal(void) {
+  if (!s_error_modal_visible || !s_error_modal_window) {
+    return;
+  }
+
+  if (window_stack_get_top_window() == s_error_modal_window) {
+    window_stack_pop(true);
+  }
+}
+
+static void error_modal_timer_cb(void *context) {
+  (void)context;
+  s_error_modal_timer = NULL;
+  dismiss_error_modal();
+}
+
+static void reset_error_modal_timer(void) {
+  cancel_error_modal_timer();
+  s_error_modal_timer = app_timer_register(ERROR_MODAL_DISMISS_MS, error_modal_timer_cb, NULL);
+}
+
+static void show_error_modal(const char *raw_message) {
+  summarize_error_message(raw_message, s_error_modal_message, sizeof(s_error_modal_message));
+
+  if (!s_error_modal_window) {
+    return;
+  }
+
+  if (s_error_modal_visible) {
+    if (s_error_modal_layer) {
+      layer_mark_dirty(s_error_modal_layer);
+    }
+    reset_error_modal_timer();
+    return;
+  }
+
+  window_stack_push(s_error_modal_window, true);
+}
+
 static void update_empty_state_visibility(void) {
+  if (s_auth_state == AppAuthStateReauthRequired) {
+    if (s_menu_layer) {
+      layer_set_hidden(menu_layer_get_layer(s_menu_layer), true);
+    }
+
+    if (s_empty_state_layer) {
+      layer_set_hidden(s_empty_state_layer, false);
+      layer_mark_dirty(s_empty_state_layer);
+    }
+    return;
+  }
+
   // Avoid flashing the empty-state view before the first contact sync arrives.
   if (!s_contacts_loaded) {
     if (s_menu_layer) {
@@ -82,9 +222,11 @@ static void empty_state_layer_update_proc(Layer *layer, GContext *ctx) {
   graphics_context_set_fill_color(ctx, app_primary_color());
   graphics_fill_rect(ctx, bounds, 0, GCornerNone);
 
-  // Draw a simple settings icon that reinforces phone-side setup.
+  bool show_reauth = s_auth_state == AppAuthStateReauthRequired;
+
+  // Draw a simple icon that reinforces phone-side setup/re-auth.
   GRect icon = GRect((bounds.size.w - 40) / 2, (bounds.size.h / 2) - 58, 40, 40);
-  graphics_context_set_fill_color(ctx, app_accent_color());
+  graphics_context_set_fill_color(ctx, show_reauth ? app_error_bg_color() : app_accent_color());
   graphics_fill_rect(ctx, icon, 8, GCornersAll);
 
   graphics_context_set_stroke_color(ctx, GColorWhite);
@@ -107,7 +249,7 @@ static void empty_state_layer_update_proc(Layer *layer, GContext *ctx) {
 
   graphics_context_set_text_color(ctx, GColorWhite);
   graphics_draw_text(ctx,
-                     "Get Started",
+                     show_reauth ? "Re-auth Required" : "Get Started",
                      fonts_get_system_font(FONT_KEY_GOTHIC_24_BOLD),
                      GRect(8, icon.origin.y + icon.size.h + 10, bounds.size.w - 16, 28),
                      GTextOverflowModeTrailingEllipsis,
@@ -116,7 +258,9 @@ static void empty_state_layer_update_proc(Layer *layer, GContext *ctx) {
 
   graphics_context_set_text_color(ctx, GColorLightGray);
   graphics_draw_text(ctx,
-                     "Open settings in the Pebble app to add contacts.",
+                     show_reauth
+                       ? "Open Patch settings on your phone and sign in to Outlook."
+                       : "Open settings in the Pebble app to add contacts.",
                      fonts_get_system_font(FONT_KEY_GOTHIC_18),
                      GRect(10, icon.origin.y + icon.size.h + 38, bounds.size.w - 20, 70),
                      GTextOverflowModeWordWrap,
@@ -137,8 +281,20 @@ static void maybe_quit_after_send(void) {
 static void sent_animation_timer_cb(void *context);
 static void sent_animation_hide_cb(void *context);
 
-static void sent_animation_layer_update_proc(Layer *layer, GContext *ctx) {
+static void sent_modal_layer_update_proc(Layer *layer, GContext *ctx) {
+  GRect bounds = layer_get_bounds(layer);
+  graphics_context_set_fill_color(ctx, app_primary_color());
+  graphics_fill_rect(ctx, bounds, 0, GCornerNone);
+
   if (!s_sent_sequence) {
+    graphics_context_set_text_color(ctx, GColorWhite);
+    graphics_draw_text(ctx,
+                       "Sent",
+                       fonts_get_system_font(FONT_KEY_GOTHIC_28_BOLD),
+                       GRect(0, (bounds.size.h / 2) - 24, bounds.size.w, 32),
+                       GTextOverflowModeTrailingEllipsis,
+                       GTextAlignmentCenter,
+                       NULL);
     return;
   }
 
@@ -147,44 +303,55 @@ static void sent_animation_layer_update_proc(Layer *layer, GContext *ctx) {
     return;
   }
 
-  GRect bounds = layer_get_bounds(layer);
   GSize seq_size = gdraw_command_sequence_get_bounds_size(s_sent_sequence);
-  GPoint origin = GPoint((bounds.size.w - seq_size.w) / 2, (bounds.size.h - seq_size.h) / 2);
+  GPoint origin = GPoint((bounds.size.w - seq_size.w) / 2, (bounds.size.h - seq_size.h) / 2 - 8);
 
   gdraw_command_frame_draw(ctx, s_sent_sequence, frame, origin);
+
+  graphics_context_set_text_color(ctx, GColorWhite);
+  graphics_draw_text(ctx,
+                     "Sent",
+                     fonts_get_system_font(FONT_KEY_GOTHIC_28_BOLD),
+                     GRect(0, bounds.size.h - 50, bounds.size.w, 30),
+                     GTextOverflowModeTrailingEllipsis,
+                     GTextAlignmentCenter,
+                     NULL);
 }
 
-static void start_sent_animation(void) {
-  if (!s_sent_sequence || !s_sent_anim_layer) {
-    maybe_quit_after_send();
-    return;
-  }
-
+static void cancel_sent_modal_timers(void) {
   if (s_sent_anim_timer) {
     app_timer_cancel(s_sent_anim_timer);
     s_sent_anim_timer = NULL;
   }
 
-  if (s_sent_anim_hide_timer) {
-    app_timer_cancel(s_sent_anim_hide_timer);
-    s_sent_anim_hide_timer = NULL;
+  if (s_sent_modal_hide_timer) {
+    app_timer_cancel(s_sent_modal_hide_timer);
+    s_sent_modal_hide_timer = NULL;
   }
+}
+
+static void sent_modal_begin_animation(void) {
+  if (!s_sent_modal_layer || !s_sent_sequence) {
+    s_sent_modal_hide_timer = app_timer_register(SENT_FALLBACK_HOLD_MS, sent_animation_hide_cb, NULL);
+    return;
+  }
+
+  cancel_sent_modal_timers();
 
   const int num_frames = gdraw_command_sequence_get_num_frames(s_sent_sequence);
   if (num_frames <= 0) {
     APP_LOG(APP_LOG_LEVEL_ERROR, "Sent sequence has no frames");
-    maybe_quit_after_send();
+    s_sent_modal_hide_timer = app_timer_register(SENT_FALLBACK_HOLD_MS, sent_animation_hide_cb, NULL);
     return;
   }
 
   s_sent_anim_frame = 0;
   s_sent_animating = true;
-  layer_set_hidden(s_sent_anim_layer, false);
-  layer_mark_dirty(s_sent_anim_layer);
+  layer_mark_dirty(s_sent_modal_layer);
 
   if (num_frames == 1) {
     s_sent_animating = false;
-    s_sent_anim_hide_timer = app_timer_register(SENT_ANIM_END_HOLD_MS, sent_animation_hide_cb, NULL);
+    s_sent_modal_hide_timer = app_timer_register(SENT_ANIM_END_HOLD_MS, sent_animation_hide_cb, NULL);
     return;
   }
 
@@ -194,7 +361,7 @@ static void start_sent_animation(void) {
 static void sent_animation_timer_cb(void *context) {
   (void)context;
 
-  if (!s_sent_animating || !s_sent_sequence || !s_sent_anim_layer) {
+  if (!s_sent_animating || !s_sent_sequence || !s_sent_modal_layer) {
     s_sent_anim_timer = NULL;
     return;
   }
@@ -203,8 +370,7 @@ static void sent_animation_timer_cb(void *context) {
   if (num_frames <= 0) {
     s_sent_animating = false;
     s_sent_anim_timer = NULL;
-    layer_set_hidden(s_sent_anim_layer, true);
-    maybe_quit_after_send();
+    sent_animation_hide_cb(NULL);
     return;
   }
 
@@ -213,32 +379,211 @@ static void sent_animation_timer_cb(void *context) {
     s_sent_animating = false;
     s_sent_anim_frame = num_frames - 1;
     s_sent_anim_timer = NULL;
-    layer_mark_dirty(s_sent_anim_layer);
-    s_sent_anim_hide_timer = app_timer_register(SENT_ANIM_END_HOLD_MS, sent_animation_hide_cb, NULL);
+    layer_mark_dirty(s_sent_modal_layer);
+    s_sent_modal_hide_timer = app_timer_register(SENT_ANIM_END_HOLD_MS, sent_animation_hide_cb, NULL);
     return;
   }
 
-  layer_mark_dirty(s_sent_anim_layer);
+  layer_mark_dirty(s_sent_modal_layer);
   s_sent_anim_timer = app_timer_register(SENT_ANIM_DELTA_MS, sent_animation_timer_cb, NULL);
 }
 
 static void sent_animation_hide_cb(void *context) {
   (void)context;
 
-  s_sent_anim_hide_timer = NULL;
-  if (!s_sent_anim_layer) {
+  s_sent_modal_hide_timer = NULL;
+  if (!s_sent_modal_window || !s_sent_modal_visible) {
+    maybe_quit_after_send();
     return;
   }
 
-  layer_set_hidden(s_sent_anim_layer, true);
-  s_sent_anim_frame = 0;
-  maybe_quit_after_send();
+  if (window_stack_get_top_window() == s_sent_modal_window) {
+    window_stack_pop(true);
+  } else {
+    maybe_quit_after_send();
+  }
+}
+
+static void start_sent_animation(void) {
+  if (!s_sent_modal_window) {
+    maybe_quit_after_send();
+    return;
+  }
+
+  if (s_sent_modal_visible) {
+    return;
+  }
+
+  window_stack_push(s_sent_modal_window, true);
 }
 #else
+static void sent_modal_layer_update_proc(Layer *layer, GContext *ctx) {
+  GRect bounds = layer_get_bounds(layer);
+  graphics_context_set_fill_color(ctx, app_primary_color());
+  graphics_fill_rect(ctx, bounds, 0, GCornerNone);
+
+  graphics_context_set_text_color(ctx, GColorWhite);
+  graphics_draw_text(ctx,
+                     "Sent",
+                     fonts_get_system_font(FONT_KEY_GOTHIC_28_BOLD),
+                     GRect(0, (bounds.size.h / 2) - 28, bounds.size.w, 32),
+                     GTextOverflowModeTrailingEllipsis,
+                     GTextAlignmentCenter,
+                     NULL);
+
+  graphics_draw_text(ctx,
+                     "Message delivered",
+                     fonts_get_system_font(FONT_KEY_GOTHIC_18),
+                     GRect(0, (bounds.size.h / 2) + 4, bounds.size.w, 26),
+                     GTextOverflowModeTrailingEllipsis,
+                     GTextAlignmentCenter,
+                     NULL);
+}
+
+static void sent_animation_hide_cb(void *context) {
+  (void)context;
+
+  s_sent_modal_hide_timer = NULL;
+  if (!s_sent_modal_window || !s_sent_modal_visible) {
+    maybe_quit_after_send();
+    return;
+  }
+
+  if (window_stack_get_top_window() == s_sent_modal_window) {
+    window_stack_pop(true);
+  } else {
+    maybe_quit_after_send();
+  }
+}
+
 static void start_sent_animation(void) {
-  maybe_quit_after_send();
+  if (!s_sent_modal_window) {
+    maybe_quit_after_send();
+    return;
+  }
+
+  if (s_sent_modal_visible) {
+    return;
+  }
+
+  window_stack_push(s_sent_modal_window, true);
 }
 #endif
+
+static void sent_modal_window_load(Window *window) {
+  Layer *window_layer = window_get_root_layer(window);
+  GRect bounds = layer_get_bounds(window_layer);
+
+  window_set_background_color(window, app_primary_color());
+  s_sent_modal_layer = layer_create(bounds);
+  layer_set_update_proc(s_sent_modal_layer, sent_modal_layer_update_proc);
+  layer_add_child(window_layer, s_sent_modal_layer);
+}
+
+static void sent_modal_window_appear(Window *window) {
+  (void)window;
+  s_sent_modal_visible = true;
+
+#ifdef PBL_COLOR
+  sent_modal_begin_animation();
+#else
+  if (s_sent_modal_hide_timer) {
+    app_timer_cancel(s_sent_modal_hide_timer);
+    s_sent_modal_hide_timer = NULL;
+  }
+  s_sent_modal_hide_timer = app_timer_register(SENT_FALLBACK_HOLD_MS, sent_animation_hide_cb, NULL);
+#endif
+
+  if (s_sent_modal_layer) {
+    layer_mark_dirty(s_sent_modal_layer);
+  }
+}
+
+static void sent_modal_window_disappear(Window *window) {
+  (void)window;
+  s_sent_modal_visible = false;
+
+  if (s_sent_modal_hide_timer) {
+    app_timer_cancel(s_sent_modal_hide_timer);
+    s_sent_modal_hide_timer = NULL;
+  }
+
+#ifdef PBL_COLOR
+  cancel_sent_modal_timers();
+  s_sent_animating = false;
+  s_sent_anim_frame = 0;
+#endif
+
+  maybe_quit_after_send();
+}
+
+static void sent_modal_window_unload(Window *window) {
+  (void)window;
+
+  if (s_sent_modal_layer) {
+    layer_destroy(s_sent_modal_layer);
+    s_sent_modal_layer = NULL;
+  }
+}
+
+static void error_modal_layer_update_proc(Layer *layer, GContext *ctx) {
+  GRect bounds = layer_get_bounds(layer);
+
+  graphics_context_set_fill_color(ctx, app_error_bg_color());
+  graphics_fill_rect(ctx, bounds, 0, GCornerNone);
+
+  graphics_context_set_text_color(ctx, GColorWhite);
+  graphics_draw_text(ctx,
+                     "Send Failed",
+                     fonts_get_system_font(FONT_KEY_GOTHIC_24_BOLD),
+                     GRect(6, 14, bounds.size.w - 12, 34),
+                     GTextOverflowModeTrailingEllipsis,
+                     GTextAlignmentCenter,
+                     NULL);
+
+  graphics_draw_text(ctx,
+                     s_error_modal_message,
+                     fonts_get_system_font(FONT_KEY_GOTHIC_18),
+                     GRect(10, 54, bounds.size.w - 20, bounds.size.h - 78),
+                     GTextOverflowModeWordWrap,
+                     GTextAlignmentCenter,
+                     NULL);
+}
+
+static void error_modal_window_load(Window *window) {
+  Layer *window_layer = window_get_root_layer(window);
+  GRect bounds = layer_get_bounds(window_layer);
+
+  window_set_background_color(window, app_error_bg_color());
+  s_error_modal_layer = layer_create(bounds);
+  layer_set_update_proc(s_error_modal_layer, error_modal_layer_update_proc);
+  layer_add_child(window_layer, s_error_modal_layer);
+}
+
+static void error_modal_window_appear(Window *window) {
+  (void)window;
+  s_error_modal_visible = true;
+  reset_error_modal_timer();
+
+  if (s_error_modal_layer) {
+    layer_mark_dirty(s_error_modal_layer);
+  }
+}
+
+static void error_modal_window_disappear(Window *window) {
+  (void)window;
+  s_error_modal_visible = false;
+  cancel_error_modal_timer();
+}
+
+static void error_modal_window_unload(Window *window) {
+  (void)window;
+
+  if (s_error_modal_layer) {
+    layer_destroy(s_error_modal_layer);
+    s_error_modal_layer = NULL;
+  }
+}
 
 static void free_contacts() {
   if (!s_contacts) return;
@@ -301,6 +646,10 @@ static uint16_t menu_get_num_rows(MenuLayer *menu_layer, uint16_t section_index,
   (void)menu_layer;
   (void)section_index;
   (void)context;
+
+  if (s_auth_state == AppAuthStateReauthRequired) {
+    return 0;
+  }
 
   if (!s_contacts_loaded) {
     return 1;
@@ -367,6 +716,22 @@ static void menu_select_click(MenuLayer *menu_layer, MenuIndex *index, void *con
 static void inbox_received(DictionaryIterator *iter, void *context) {
   (void)context;
 
+  Tuple *auth_state_t = dict_find(iter, KEY_AUTH_STATE);
+  if (auth_state_t) {
+    int32_t raw_state = auth_state_t->value->int32;
+    AppAuthState next_state = AppAuthStateUnknown;
+    if (raw_state == AUTH_STATE_REAUTH_REQUIRED) {
+      next_state = AppAuthStateReauthRequired;
+    } else if (raw_state == AUTH_STATE_OK) {
+      next_state = AppAuthStateOk;
+    }
+
+    if (s_auth_state != next_state) {
+      s_auth_state = next_state;
+      update_empty_state_visibility();
+    }
+  }
+
   Tuple *quit_after_send_t = dict_find(iter, KEY_QUIT_AFTER_SEND);
   if (quit_after_send_t) {
     s_quit_after_send_enabled = quit_after_send_t->value->int32 != 0;
@@ -392,8 +757,17 @@ static void inbox_received(DictionaryIterator *iter, void *context) {
 
   Tuple *error_t = dict_find(iter, KEY_ERROR);
   if (error_t) {
+    const char *error_text = error_t->value->cstring;
     s_pending_quit_after_send = false;
-    APP_LOG(APP_LOG_LEVEL_ERROR, "Error: %s", error_t->value->cstring);
+    APP_LOG(APP_LOG_LEVEL_ERROR, "Error: %s", error_text);
+
+    if (contains_case_insensitive(error_text, "sign in") ||
+        contains_case_insensitive(error_text, "session expired")) {
+      s_auth_state = AppAuthStateReauthRequired;
+      update_empty_state_visibility();
+    }
+
+    show_error_modal(error_text);
     vibes_long_pulse();
   }
 }
@@ -419,13 +793,6 @@ static void main_window_load(Window *window) {
   layer_set_update_proc(s_empty_state_layer, empty_state_layer_update_proc);
   layer_add_child(window_layer, s_empty_state_layer);
 
-#ifdef PBL_COLOR
-  s_sent_anim_layer = layer_create(bounds);
-  layer_set_update_proc(s_sent_anim_layer, sent_animation_layer_update_proc);
-  layer_set_hidden(s_sent_anim_layer, true);
-  layer_add_child(window_layer, s_sent_anim_layer);
-#endif
-
   update_empty_state_visibility();
 }
 
@@ -433,22 +800,8 @@ static void main_window_unload(Window *window) {
   (void)window;
 
 #ifdef PBL_COLOR
-  if (s_sent_anim_timer) {
-    app_timer_cancel(s_sent_anim_timer);
-    s_sent_anim_timer = NULL;
-  }
-
-  if (s_sent_anim_hide_timer) {
-    app_timer_cancel(s_sent_anim_hide_timer);
-    s_sent_anim_hide_timer = NULL;
-  }
-
+  cancel_sent_modal_timers();
   s_sent_animating = false;
-
-  if (s_sent_anim_layer) {
-    layer_destroy(s_sent_anim_layer);
-    s_sent_anim_layer = NULL;
-  }
 #endif
 
   if (s_empty_state_layer) {
@@ -489,6 +842,22 @@ static void init(void) {
   }
 #endif
 
+  s_sent_modal_window = window_create();
+  window_set_window_handlers(s_sent_modal_window, (WindowHandlers){
+    .load = sent_modal_window_load,
+    .appear = sent_modal_window_appear,
+    .disappear = sent_modal_window_disappear,
+    .unload = sent_modal_window_unload,
+  });
+
+  s_error_modal_window = window_create();
+  window_set_window_handlers(s_error_modal_window, (WindowHandlers){
+    .load = error_modal_window_load,
+    .appear = error_modal_window_appear,
+    .disappear = error_modal_window_disappear,
+    .unload = error_modal_window_unload,
+  });
+
   s_main_window = window_create();
   window_set_window_handlers(s_main_window, (WindowHandlers){
     .load = main_window_load,
@@ -499,15 +868,7 @@ static void init(void) {
 
 static void deinit(void) {
 #ifdef PBL_COLOR
-  if (s_sent_anim_timer) {
-    app_timer_cancel(s_sent_anim_timer);
-    s_sent_anim_timer = NULL;
-  }
-
-  if (s_sent_anim_hide_timer) {
-    app_timer_cancel(s_sent_anim_hide_timer);
-    s_sent_anim_hide_timer = NULL;
-  }
+  cancel_sent_modal_timers();
 
   if (s_sent_sequence) {
     gdraw_command_sequence_destroy(s_sent_sequence);
@@ -515,8 +876,26 @@ static void deinit(void) {
   }
 #endif
 
+  if (s_sent_modal_hide_timer) {
+    app_timer_cancel(s_sent_modal_hide_timer);
+    s_sent_modal_hide_timer = NULL;
+  }
+
+  cancel_error_modal_timer();
+
   if (s_dictation) dictation_session_destroy(s_dictation);
   free_contacts();
+
+  if (s_error_modal_window) {
+    window_destroy(s_error_modal_window);
+    s_error_modal_window = NULL;
+  }
+
+  if (s_sent_modal_window) {
+    window_destroy(s_sent_modal_window);
+    s_sent_modal_window = NULL;
+  }
+
   if (s_main_window) window_destroy(s_main_window);
 }
 

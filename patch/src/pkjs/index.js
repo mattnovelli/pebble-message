@@ -10,6 +10,31 @@ var KEY_ERROR = 2;
 var KEY_STATUS = 3;
 var KEY_CONTACT_NAMES = 4;
 var KEY_QUIT_AFTER_SEND = 5;
+var KEY_AUTH_STATE = 6;
+
+var AUTH_STATE_UNKNOWN = 0;
+var AUTH_STATE_OK = 1;
+var AUTH_STATE_REAUTH_REQUIRED = 2;
+
+var CONTACT_EMOJI_DEFAULT_CODE = '1F4AC';
+var CONTACT_EMOJI_ALLOWED_CODES = [
+  '1F4AC', // Speech balloon
+  '1F4DE', // Phone
+  '1F4F1', // Mobile phone
+  '2709',  // Envelope
+  '1F603', // Smiley
+  '1F389', // Celebration
+  '1F44D', // Thumbs up
+  '2764',  // Heart
+  '1F4E2', // Loudspeaker
+  '1F512'  // Lock
+];
+var CONTACT_EMOJI_LOOKUP = {};
+
+for (var emojiIndex = 0; emojiIndex < CONTACT_EMOJI_ALLOWED_CODES.length; emojiIndex++) {
+  CONTACT_EMOJI_LOOKUP[CONTACT_EMOJI_ALLOWED_CODES[emojiIndex]] = true;
+}
+
 var TOKEN_REFRESH_BUFFER_MS = 10 * 60 * 1000;
 var TOKEN_REFRESH_TIMEOUT_MS = 15 * 1000;
 var TOKEN_REFRESH_MAX_ATTEMPTS = 3;
@@ -62,11 +87,12 @@ function handleAppMessage(e) {
     return;
   }
   
-  if (!s.graph || !s.graph.accessToken) {
+  if (!s.graph || (!s.graph.accessToken && !s.graph.refreshToken)) {
     console.log('ERROR: Missing access token');
     var msg = {};
     msg[KEY_ERROR] = 'Missing access token - please sign in';
     Pebble.sendAppMessage(msg);
+    sendAuthStateToWatch(AUTH_STATE_REAUTH_REQUIRED);
     return;
   }
   
@@ -93,6 +119,10 @@ function handleAppMessage(e) {
       var msg = {};
       msg[KEY_ERROR] = getTokenErrorMessage(error);
       Pebble.sendAppMessage(msg);
+
+      if (error.requiresReauth) {
+        sendAuthStateToWatch(AUTH_STATE_REAUTH_REQUIRED);
+      }
       return;
     }
 
@@ -249,12 +279,77 @@ function handleEmailError(err, contact) {
   var msg = {};
   msg[KEY_ERROR] = errorMsg;
   Pebble.sendAppMessage(msg);
+
+  if (errorMsg.indexOf('sign in') !== -1 || errorMsg.indexOf('expired') !== -1) {
+    sendAuthStateToWatch(AUTH_STATE_REAUTH_REQUIRED);
+  }
 }
 
 // Remove Clay completely - use traditional Pebble configuration
 
 
 // Settings functions
+function normalizeEmojiCode(code) {
+  var v = String(code || '').trim().toUpperCase();
+  if (!v) {
+    return '';
+  }
+
+  return CONTACT_EMOJI_LOOKUP[v] ? v : '';
+}
+
+function emojiCharFromCode(code) {
+  var normalized = normalizeEmojiCode(code);
+  if (!normalized) {
+    return '';
+  }
+
+  if (typeof String.fromCodePoint !== 'function') {
+    return '';
+  }
+
+  try {
+    return String.fromCodePoint(parseInt(normalized, 16));
+  } catch (e) {
+    return '';
+  }
+}
+
+function normalizeContact(contact) {
+  var c = contact || {};
+  return {
+    name: String(c.name || '').trim(),
+    phone: String(c.phone || '').trim(),
+    emoji: normalizeEmojiCode(c.emoji)
+  };
+}
+
+function normalizeContacts(contacts) {
+  var list = Array.isArray(contacts) ? contacts : [];
+  var normalized = [];
+
+  for (var i = 0; i < list.length; i++) {
+    var entry = normalizeContact(list[i]);
+    if (entry.name && entry.phone) {
+      normalized.push(entry);
+    }
+  }
+
+  return normalized;
+}
+
+function getContactDisplayName(contact) {
+  var c = normalizeContact(contact);
+  if (!c.name) {
+    return '';
+  }
+
+  var emojiCode = c.emoji || CONTACT_EMOJI_DEFAULT_CODE;
+  var emojiChar = emojiCharFromCode(emojiCode);
+
+  return emojiChar ? (emojiChar + ' ' + c.name) : c.name;
+}
+
 function getSettings() {
   try {
     var parsed = JSON.parse(localStorage.getItem('settings')) || { 
@@ -263,6 +358,9 @@ function getSettings() {
       targetEmail: '',
       quitAfterSend: false
     };
+
+    parsed.contacts = normalizeContacts(parsed.contacts);
+    parsed.graph = parsed.graph || { accessToken: '' };
     parsed.quitAfterSend = !!parsed.quitAfterSend;
     return parsed;
   } catch (e) {
@@ -277,7 +375,46 @@ function getSettings() {
 
 
 function setSettings(s) {
-  localStorage.setItem('settings', JSON.stringify(s));
+  var normalized = s || {};
+  normalized.contacts = normalizeContacts(normalized.contacts);
+  normalized.graph = normalized.graph || { accessToken: '' };
+  normalized.quitAfterSend = !!normalized.quitAfterSend;
+  localStorage.setItem('settings', JSON.stringify(normalized));
+}
+
+function getAuthState(settings) {
+  var s = settings || getSettings();
+  var graph = s.graph || {};
+  var authConfig = getAuthConfig(s);
+
+  if (authConfig.hasInvalidClientId) {
+    return AUTH_STATE_REAUTH_REQUIRED;
+  }
+
+  if (!graph.accessToken && !graph.refreshToken) {
+    return AUTH_STATE_REAUTH_REQUIRED;
+  }
+
+  if (graph.expiresAt && Date.now() >= graph.expiresAt && !graph.refreshToken) {
+    return AUTH_STATE_REAUTH_REQUIRED;
+  }
+
+  return AUTH_STATE_OK;
+}
+
+function sendAuthStateToWatch(authState) {
+  var state = typeof authState === 'number' ? authState : getAuthState(getSettings());
+  var msg = {};
+  msg[KEY_AUTH_STATE] = state;
+
+  Pebble.sendAppMessage(msg,
+    function() {
+      console.log('Auth state sent: ' + state);
+    },
+    function(e) {
+      console.log('Failed to send auth state: ' + JSON.stringify(e));
+    }
+  );
 }
 
 
@@ -291,11 +428,13 @@ function sendContactsToWatch() {
     console.log('No contacts found, sending empty string');
   }
   
-  var names = s.contacts.map(function(c) { return c.name; }).join('\n');
+  var names = s.contacts.map(function(c) { return getContactDisplayName(c); }).join('\n');
+  var authState = getAuthState(s);
   console.log('Sending contacts to watch: "' + names + '"');
   var msg = {};
   msg[KEY_CONTACT_NAMES] = names;
   msg[KEY_QUIT_AFTER_SEND] = s.quitAfterSend ? 1 : 0;
+  msg[KEY_AUTH_STATE] = authState;
   Pebble.sendAppMessage(msg, 
     function() {
       console.log('Contacts sent successfully');
@@ -605,7 +744,7 @@ function ensureValidToken(callback) {
   var authConfig = getAuthConfig(settings);
   var graph = settings.graph || {};
   
-  if (!graph.accessToken) {
+  if (!graph.accessToken && !graph.refreshToken) {
     callback(createTokenError('missing_access_token', 'Not signed in - open settings and sign in again', {
       requiresReauth: true
     }));
@@ -622,10 +761,11 @@ function ensureValidToken(callback) {
   // Check if token is expired or will expire soon.
   var now = Date.now();
   var expiresAt = graph.expiresAt || 0;
-  var shouldRefresh = !expiresAt || (now + TOKEN_REFRESH_BUFFER_MS >= expiresAt);
+  var shouldRefresh = !graph.accessToken || !expiresAt || (now + TOKEN_REFRESH_BUFFER_MS >= expiresAt);
   
   if (!shouldRefresh) {
     console.log('Token is still valid. Expires in ' + Math.round((expiresAt - now) / 1000) + 's');
+    sendAuthStateToWatch(AUTH_STATE_OK);
     callback(null, graph.accessToken);
     return;
   }
@@ -651,6 +791,9 @@ function ensureValidToken(callback) {
   refreshAccessTokenWithRetry(authConfig, graph.refreshToken, function(error, tokens) {
     if (error) {
       console.log('Token refresh failed after retries: ' + JSON.stringify(error));
+      if (error.requiresReauth) {
+        sendAuthStateToWatch(AUTH_STATE_REAUTH_REQUIRED);
+      }
       flushRefreshWaiters(error, null);
       return;
     }
@@ -660,6 +803,7 @@ function ensureValidToken(callback) {
     setSettings(latestSettings);
 
     console.log('Token refresh complete. New expiry: ' + tokens.expiresAt);
+    sendAuthStateToWatch(AUTH_STATE_OK);
     flushRefreshWaiters(null, tokens.accessToken);
   });
 }
@@ -669,6 +813,8 @@ Pebble.addEventListener('showConfiguration', function() {
   console.log('showConfiguration fired - opening hosted config page');
   var settings = getSettings();
   var authConfig = getAuthConfig(settings);
+  var authState = getAuthState(settings);
+  var autoPersist = authState === AUTH_STATE_REAUTH_REQUIRED ? '1' : '0';
 
   var sep = CONFIG_PAGE_URL.indexOf('?') === -1 ? '?' : '&';
   var configURL = CONFIG_PAGE_URL + sep + [
@@ -676,7 +822,9 @@ Pebble.addEventListener('showConfiguration', function() {
     'settings=' + encodeURIComponent(JSON.stringify(settings)),
     'client_id=' + encodeURIComponent(authConfig.clientId),
     'tenant=' + encodeURIComponent(authConfig.tenantId),
-    'scope=' + encodeURIComponent(authConfig.scope)
+    'scope=' + encodeURIComponent(authConfig.scope),
+    'auth_state=' + authState,
+    'auto_persist=' + autoPersist
   ].join('&');
 
   console.log('Opening config URL: ' + configURL);
