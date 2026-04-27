@@ -1,4 +1,4 @@
-![Patch](docs\img\patch-header.svg)
+<img src="docs\img\patch-header.svg" />
 
 ## Voice-to-Text Messaging for iOS
 
