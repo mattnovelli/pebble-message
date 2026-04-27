@@ -48,7 +48,13 @@
       "KEY_CONTACT_NAMES"
     ],
     "resources": {
-      "media": []
+      "media": [
+        {
+          "type": "raw",
+          "name": "SENT_SEQUENCE",
+          "file": "Pebble_80x80_Sent.pdc"
+        }
+      ]
     }
   }
 }

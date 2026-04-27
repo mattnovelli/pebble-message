@@ -337,6 +337,8 @@ button.link {
 	var SESSION_STATE_KEY = 'send_message_oauth_state';
 	var LEGACY_CLIENT_ID_KEY = 'send_message_client_id';
 	var LOCAL_CUSTOM_CLIENT_ID_KEY = 'send_message_custom_client_id';
+	var CLIENT_ID_PLACEHOLDER = 'YOUR_ENTRA_APP_CLIENT_ID_HERE';
+	var CLIENT_ID_REGEX = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;
 
 	var currentSettings = {
 		contacts: [],
@@ -383,6 +385,23 @@ button.link {
 
 	function getScope() {
 		return (getParam('scope') || DEFAULT_SCOPE).trim();
+	}
+
+	function normalizeCustomClientId(value) {
+		var v = String(value || '').trim();
+		if (!v || v === PROVIDED_CLIENT_ID) {
+			return '';
+		}
+
+		if (v === CLIENT_ID_PLACEHOLDER || /^YOUR_/i.test(v)) {
+			return '';
+		}
+
+		if (!CLIENT_ID_REGEX.test(v)) {
+			return '';
+		}
+
+		return v;
 	}
 
 	function updateContactsEmptyHint() {
@@ -520,13 +539,13 @@ button.link {
 			}
 		}
 
-		var queryClientId = getParam('client_id');
-		var savedCustomClientId = localStorage.getItem(LOCAL_CUSTOM_CLIENT_ID_KEY) || localStorage.getItem(LEGACY_CLIENT_ID_KEY) || '';
+		var queryClientId = normalizeCustomClientId(getParam('client_id'));
+		var savedCustomClientId = normalizeCustomClientId(localStorage.getItem(LOCAL_CUSTOM_CLIENT_ID_KEY) || localStorage.getItem(LEGACY_CLIENT_ID_KEY) || '');
 		var customClientId = '';
 
-		if (queryClientId && queryClientId !== PROVIDED_CLIENT_ID) {
+		if (queryClientId) {
 			customClientId = queryClientId;
-		} else if (savedCustomClientId && savedCustomClientId !== PROVIDED_CLIENT_ID) {
+		} else if (savedCustomClientId) {
 			customClientId = savedCustomClientId;
 		}
 
@@ -537,6 +556,9 @@ button.link {
 
 		if (customClientId) {
 			localStorage.setItem(LOCAL_CUSTOM_CLIENT_ID_KEY, customClientId);
+			localStorage.removeItem(LEGACY_CLIENT_ID_KEY);
+		} else {
+			localStorage.removeItem(LOCAL_CUSTOM_CLIENT_ID_KEY);
 			localStorage.removeItem(LEGACY_CLIENT_ID_KEY);
 		}
 	}
@@ -597,18 +619,23 @@ button.link {
 			return;
 		}
 
-		var clientId = getClientId();
+		var clientId = isUsingCustomClient()
+			? normalizeCustomClientId(document.getElementById('clientId').value)
+			: PROVIDED_CLIENT_ID;
 		if (!clientId) {
 			setAuthStatus('Client ID is required before exchanging code.', false);
 			return;
 		}
 
+		var tenant = getTenant();
+		var scope = getScope();
+
 		setAuthStatus('Exchanging authorization code for tokens...', false);
 
-		var tokenUrl = 'https://login.microsoftonline.com/' + encodeURIComponent(getTenant()) + '/oauth2/v2.0/token';
+		var tokenUrl = 'https://login.microsoftonline.com/' + encodeURIComponent(tenant) + '/oauth2/v2.0/token';
 		var body = [
 			'client_id=' + encodeURIComponent(clientId),
-			'scope=' + encodeURIComponent(getScope()),
+			'scope=' + encodeURIComponent(scope),
 			'code=' + encodeURIComponent(code),
 			'redirect_uri=' + encodeURIComponent(receiverUri()),
 			'grant_type=authorization_code',
@@ -630,6 +657,8 @@ button.link {
 						expiresIn: data.expires_in,
 						tokenType: data.token_type,
 						scope: data.scope,
+						clientId: clientId,
+						tenantId: tenant,
 						expiresAt: Date.now() + ((data.expires_in || 3600) * 1000)
 					};
 
@@ -676,9 +705,12 @@ button.link {
 	}
 
 	function beginLogin() {
-		var clientId = getClientId();
+		var clientId = isUsingCustomClient()
+			? normalizeCustomClientId(document.getElementById('clientId').value)
+			: PROVIDED_CLIENT_ID;
+
 		if (isUsingCustomClient() && !clientId) {
-			setAuthStatus('Enter your custom Client ID or choose Option 1.', false);
+			setAuthStatus('Enter a valid custom Client ID (GUID) or choose Option 1.', false);
 			return;
 		}
 
@@ -744,11 +776,13 @@ button.link {
 		});
 
 		document.getElementById('clientId').addEventListener('change', function() {
-			var value = this.value.trim();
+			var value = normalizeCustomClientId(this.value);
 			if (value) {
+				this.value = value;
 				localStorage.setItem(LOCAL_CUSTOM_CLIENT_ID_KEY, value);
 				localStorage.removeItem(LEGACY_CLIENT_ID_KEY);
 			} else {
+				this.value = '';
 				localStorage.removeItem(LOCAL_CUSTOM_CLIENT_ID_KEY);
 				localStorage.removeItem(LEGACY_CLIENT_ID_KEY);
 			}

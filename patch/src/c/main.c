@@ -8,6 +8,8 @@
 #define KEY_CONTACT_NAMES 4
 
 #define SENT_STATUS_PREFIX "Email sent"
+#define SENT_ANIM_DELTA_MS 33
+#define SENT_ANIM_END_HOLD_MS 450
 
 static Window *s_main_window;
 static MenuLayer *s_menu_layer;
@@ -20,6 +22,15 @@ static bool s_contacts_loaded = false;
 
 static DictationSession *s_dictation;
 static int s_selected_index = -1;
+
+#ifdef PBL_COLOR
+static Layer *s_sent_anim_layer;
+static GDrawCommandSequence *s_sent_sequence;
+static AppTimer *s_sent_anim_timer;
+static AppTimer *s_sent_anim_hide_timer;
+static int s_sent_anim_frame = 0;
+static bool s_sent_animating = false;
+#endif
 
 static GColor app_primary_color(void) {
 #ifdef PBL_COLOR
@@ -109,6 +120,108 @@ static void empty_state_layer_update_proc(Layer *layer, GContext *ctx) {
                      GTextAlignmentCenter,
                      NULL);
 }
+
+#ifdef PBL_COLOR
+static void sent_animation_timer_cb(void *context);
+static void sent_animation_hide_cb(void *context);
+
+static void sent_animation_layer_update_proc(Layer *layer, GContext *ctx) {
+  if (!s_sent_sequence) {
+    return;
+  }
+
+  GDrawCommandFrame *frame = gdraw_command_sequence_get_frame_by_index(s_sent_sequence, s_sent_anim_frame);
+  if (!frame) {
+    return;
+  }
+
+  GRect bounds = layer_get_bounds(layer);
+  GSize seq_size = gdraw_command_sequence_get_bounds_size(s_sent_sequence);
+  GPoint origin = GPoint((bounds.size.w - seq_size.w) / 2, (bounds.size.h - seq_size.h) / 2);
+
+  gdraw_command_frame_draw(ctx, s_sent_sequence, frame, origin);
+}
+
+static void start_sent_animation(void) {
+  if (!s_sent_sequence || !s_sent_anim_layer) {
+    return;
+  }
+
+  if (s_sent_anim_timer) {
+    app_timer_cancel(s_sent_anim_timer);
+    s_sent_anim_timer = NULL;
+  }
+
+  if (s_sent_anim_hide_timer) {
+    app_timer_cancel(s_sent_anim_hide_timer);
+    s_sent_anim_hide_timer = NULL;
+  }
+
+  const int num_frames = gdraw_command_sequence_get_num_frames(s_sent_sequence);
+  if (num_frames <= 0) {
+    APP_LOG(APP_LOG_LEVEL_ERROR, "Sent sequence has no frames");
+    return;
+  }
+
+  s_sent_anim_frame = 0;
+  s_sent_animating = true;
+  layer_set_hidden(s_sent_anim_layer, false);
+  layer_mark_dirty(s_sent_anim_layer);
+
+  if (num_frames == 1) {
+    s_sent_animating = false;
+    s_sent_anim_hide_timer = app_timer_register(SENT_ANIM_END_HOLD_MS, sent_animation_hide_cb, NULL);
+    return;
+  }
+
+  s_sent_anim_timer = app_timer_register(SENT_ANIM_DELTA_MS, sent_animation_timer_cb, NULL);
+}
+
+static void sent_animation_timer_cb(void *context) {
+  (void)context;
+
+  if (!s_sent_animating || !s_sent_sequence || !s_sent_anim_layer) {
+    s_sent_anim_timer = NULL;
+    return;
+  }
+
+  const int num_frames = gdraw_command_sequence_get_num_frames(s_sent_sequence);
+  if (num_frames <= 0) {
+    s_sent_animating = false;
+    s_sent_anim_timer = NULL;
+    layer_set_hidden(s_sent_anim_layer, true);
+    return;
+  }
+
+  s_sent_anim_frame++;
+  if (s_sent_anim_frame >= num_frames - 1) {
+    s_sent_animating = false;
+    s_sent_anim_frame = num_frames - 1;
+    s_sent_anim_timer = NULL;
+    layer_mark_dirty(s_sent_anim_layer);
+    s_sent_anim_hide_timer = app_timer_register(SENT_ANIM_END_HOLD_MS, sent_animation_hide_cb, NULL);
+    return;
+  }
+
+  layer_mark_dirty(s_sent_anim_layer);
+  s_sent_anim_timer = app_timer_register(SENT_ANIM_DELTA_MS, sent_animation_timer_cb, NULL);
+}
+
+static void sent_animation_hide_cb(void *context) {
+  (void)context;
+
+  s_sent_anim_hide_timer = NULL;
+  if (!s_sent_anim_layer) {
+    return;
+  }
+
+  layer_set_hidden(s_sent_anim_layer, true);
+  s_sent_anim_frame = 0;
+}
+#else
+static void start_sent_animation(void) {
+}
+#endif
 
 static void free_contacts() {
   if (!s_contacts) return;
@@ -249,6 +362,7 @@ static void inbox_received(DictionaryIterator *iter, void *context) {
 
     if (status_text && strstr(status_text, SENT_STATUS_PREFIX)) {
       vibes_short_pulse();
+      start_sent_animation();
     }
   }
 
@@ -280,11 +394,37 @@ static void main_window_load(Window *window) {
   layer_set_update_proc(s_empty_state_layer, empty_state_layer_update_proc);
   layer_add_child(window_layer, s_empty_state_layer);
 
+#ifdef PBL_COLOR
+  s_sent_anim_layer = layer_create(bounds);
+  layer_set_update_proc(s_sent_anim_layer, sent_animation_layer_update_proc);
+  layer_set_hidden(s_sent_anim_layer, true);
+  layer_add_child(window_layer, s_sent_anim_layer);
+#endif
+
   update_empty_state_visibility();
 }
 
 static void main_window_unload(Window *window) {
   (void)window;
+
+#ifdef PBL_COLOR
+  if (s_sent_anim_timer) {
+    app_timer_cancel(s_sent_anim_timer);
+    s_sent_anim_timer = NULL;
+  }
+
+  if (s_sent_anim_hide_timer) {
+    app_timer_cancel(s_sent_anim_hide_timer);
+    s_sent_anim_hide_timer = NULL;
+  }
+
+  s_sent_animating = false;
+
+  if (s_sent_anim_layer) {
+    layer_destroy(s_sent_anim_layer);
+    s_sent_anim_layer = NULL;
+  }
+#endif
 
   if (s_empty_state_layer) {
     layer_destroy(s_empty_state_layer);
@@ -315,6 +455,15 @@ static void init(void) {
   app_message_register_outbox_failed(outbox_failed);
   app_message_open(512, 512);
 
+#ifdef PBL_COLOR
+  s_sent_sequence = gdraw_command_sequence_create_with_resource(RESOURCE_ID_SENT_SEQUENCE);
+  if (!s_sent_sequence) {
+    APP_LOG(APP_LOG_LEVEL_ERROR, "Failed to load sent sequence resource");
+  } else {
+    APP_LOG(APP_LOG_LEVEL_INFO, "Sent sequence loaded with %d frames", gdraw_command_sequence_get_num_frames(s_sent_sequence));
+  }
+#endif
+
   s_main_window = window_create();
   window_set_window_handlers(s_main_window, (WindowHandlers){
     .load = main_window_load,
@@ -324,6 +473,23 @@ static void init(void) {
 }
 
 static void deinit(void) {
+#ifdef PBL_COLOR
+  if (s_sent_anim_timer) {
+    app_timer_cancel(s_sent_anim_timer);
+    s_sent_anim_timer = NULL;
+  }
+
+  if (s_sent_anim_hide_timer) {
+    app_timer_cancel(s_sent_anim_hide_timer);
+    s_sent_anim_hide_timer = NULL;
+  }
+
+  if (s_sent_sequence) {
+    gdraw_command_sequence_destroy(s_sent_sequence);
+    s_sent_sequence = NULL;
+  }
+#endif
+
   if (s_dictation) dictation_session_destroy(s_dictation);
   free_contacts();
   if (s_main_window) window_destroy(s_main_window);

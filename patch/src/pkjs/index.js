@@ -330,14 +330,33 @@ var OAUTH_CONFIG = {
 // This page should handle OAuth and return settings via pebblejs://close#<json>
 var CONFIG_PAGE_URL = OAUTH_CONFIG.redirectUri;
 
+function normalizeClientId(clientId) {
+  var v = String(clientId || '').trim();
+  if (!v || v === OAUTH_CONFIG.clientId || /^YOUR_/i.test(v)) {
+    return OAUTH_CONFIG.clientId;
+  }
+
+  var guidPattern = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;
+  return guidPattern.test(v) ? v : OAUTH_CONFIG.clientId;
+}
+
+function getAuthConfig(settings) {
+  var graph = (settings && settings.graph) || {};
+  return {
+    clientId: normalizeClientId(graph.clientId),
+    tenantId: (graph.tenantId || OAUTH_CONFIG.tenantId),
+    scope: (graph.scope || OAUTH_CONFIG.scope)
+  };
+}
+
 // Refresh access token using refresh token
-function refreshAccessToken(refreshToken, callback) {
+function refreshAccessToken(authConfig, refreshToken, callback) {
   console.log('Refreshing access token...');
   
-  var tokenUrl = 'https://login.microsoftonline.com/' + OAUTH_CONFIG.tenantId + '/oauth2/v2.0/token';
+  var tokenUrl = 'https://login.microsoftonline.com/' + authConfig.tenantId + '/oauth2/v2.0/token';
   var body = [
-    'client_id=' + encodeURIComponent(OAUTH_CONFIG.clientId),
-    'scope=' + encodeURIComponent(OAUTH_CONFIG.scope),
+    'client_id=' + encodeURIComponent(authConfig.clientId),
+    'scope=' + encodeURIComponent(authConfig.scope),
     'refresh_token=' + encodeURIComponent(refreshToken),
     'grant_type=refresh_token'
   ].join('&');
@@ -360,6 +379,8 @@ function refreshAccessToken(refreshToken, callback) {
             expiresIn: response.expires_in,
             tokenType: response.token_type,
             scope: response.scope,
+            clientId: authConfig.clientId,
+            tenantId: authConfig.tenantId,
             expiresAt: Date.now() + (response.expires_in * 1000)
           });
         } catch (e) {
@@ -379,6 +400,7 @@ function refreshAccessToken(refreshToken, callback) {
 // Check if token needs refresh and refresh if necessary
 function ensureValidToken(callback) {
   var settings = getSettings();
+  var authConfig = getAuthConfig(settings);
   
   if (!settings.graph || !settings.graph.accessToken) {
     callback('No access token available');
@@ -398,7 +420,7 @@ function ensureValidToken(callback) {
       return;
     }
     
-    refreshAccessToken(settings.graph.refreshToken, function(error, tokens) {
+    refreshAccessToken(authConfig, settings.graph.refreshToken, function(error, tokens) {
       if (error) {
         callback(error);
         return;
@@ -419,14 +441,15 @@ function ensureValidToken(callback) {
 Pebble.addEventListener('showConfiguration', function() {
   console.log('showConfiguration fired - opening hosted config page');
   var settings = getSettings();
+  var authConfig = getAuthConfig(settings);
 
   var sep = CONFIG_PAGE_URL.indexOf('?') === -1 ? '?' : '&';
   var configURL = CONFIG_PAGE_URL + sep + [
     't=' + Date.now(),
     'settings=' + encodeURIComponent(JSON.stringify(settings)),
-    'client_id=' + encodeURIComponent(OAUTH_CONFIG.clientId),
-    'tenant=' + encodeURIComponent(OAUTH_CONFIG.tenantId),
-    'scope=' + encodeURIComponent(OAUTH_CONFIG.scope)
+    'client_id=' + encodeURIComponent(authConfig.clientId),
+    'tenant=' + encodeURIComponent(authConfig.tenantId),
+    'scope=' + encodeURIComponent(authConfig.scope)
   ].join('&');
 
   console.log('Opening config URL: ' + configURL);
