@@ -10,7 +10,7 @@
     <title>Patch OAuth Config</title>
     <style>
       :root {
-        --bg: #0f1526;
+        --bg: #121a2c;
         --card: #1a2338;
         --card-border: #2c3752;
         --text: #e8ecf7;
@@ -31,10 +31,7 @@
 
       body {
         margin: 0;
-        background:
-          radial-gradient(circle at 12% 18%, #1f3a70 0%, transparent 45%),
-          radial-gradient(circle at 88% 82%, #2b2f58 0%, transparent 42%),
-          var(--bg);
+        background: var(--bg);
         color: var(--text);
         font:
           15px/1.45 "Segoe UI",
@@ -47,14 +44,17 @@
       .wrap {
         max-width: 740px;
         margin: 0 auto;
+        display: flex;
+        flex-direction: column;
+        gap: 2em;
       }
 
       .card {
-        background: rgba(26, 35, 56, 0.92);
+        background: var(--card);
         border: 1px solid var(--card-border);
         border-radius: 12px;
         padding: 18px;
-        box-shadow: 0 16px 40px rgba(2, 8, 22, 0.35);
+        box-shadow: none;
       }
 
       h1 {
@@ -282,7 +282,7 @@
         border: 1px solid #2f3b57;
         border-radius: 6px;
         overflow: hidden;
-        background: rgba(17, 26, 47, 0.7);
+        background: #111a2f;
       }
 
       .shortcut-table {
@@ -303,7 +303,7 @@
         text-transform: uppercase;
         letter-spacing: 0.04em;
         color: #c7d6f8;
-        background: rgba(24, 35, 61, 0.65);
+        background: #18233d;
       }
 
       .shortcut-table td:first-child {
@@ -330,39 +330,36 @@
   <body>
     <div class="wrap">
       <div class="card">
-        <h1>Welcome to Patch!</h1>
+        <h1>Welcome to Patch</h1>
         <h2>
-          Patch uses the power of iOS Automations to send messages from your
-          pebble.
+          Patch uses the power of iOS Automations to send text messages from
+          your Pebble.
         </h2>
         <p>
-          When you send a message, Patch sends and email to yourself with the
-          details of the message you want to send. Then, an iOS automation
-          intercepts the email and immediately sends the text message.
+          When you send a message, Patch sends an email to yourself with the
+          message body and recipient details. Then, an iOS automation intercepts
+          the email and immediately sends the text message.
         </p>
         <p>
-          This method isn't perfect, and there's a small delay, but Patch brings
-          Messages to your wrist!
+          The whole process takes less than ten seconds and requires no
+          intervention after you hit send on the Pebble.
         </p>
-
+        <!-- <p>
+          This method isn't perfect, and there's a small delay, but Patch
+          undeniably brings Messages to your wrist!
+        </p> -->
+      </div>
+      <div class="card">
         <div
           class="section"
           style="margin-top: 0; padding-top: 0; border-top: 0"
         ></div>
-        <h2>Prerequisites</h2>
+        <h2>Configuration</h2>
+        <h3>Prerequisites</h3>
         <ol>
           <li>
-            A <a href="">Microsoft Outlook account</a>.
-            <b
-              >Outlook is free and supports push notifications in the iOS Mail
-              app.</b
-            >
-            <ul>
-              <li>
-                You may want to create a separate account to keep your messages
-                separate from emails. Up to you!
-              </li>
-            </ul>
+            A <a href="">Microsoft Outlook account</a>. Patch uses Outlook since
+            it's free and supports push notifications to the iOS Mail app.
           </li>
           <li>
             <a href="">Shortcuts</a> installed on the iOS device you want to
@@ -370,7 +367,7 @@
           </li>
         </ol>
 
-        <h2>Shortcut Setup</h2>
+        <h3>Automation Setup</h3>
         <ol>
           <li>
             Add your Outlook account to the native iOS Mail app
@@ -433,7 +430,7 @@
           class="section"
           style="margin-top: 0; padding-top: 0; border-top: 0"
         >
-          <h2>Authentication</h2>
+          <h3>Outlook Authentication</h3>
           <div id="authStatus" class="status">Not signed in.</div>
           <div class="help">Choose one sign-in option:</div>
 
@@ -447,12 +444,14 @@
                   value="shared"
                   checked
                 />
-                <span class="option-title">Option 1: Patch</span></label
+                <span class="option-title">Option 1: Patch Client</span></label
               >
               <div class="option-content">
                 <div class="help">
-                  This client is maintained by Patch and intended for safe
-                  public use. You may want to
+                  This client is maintained by Patch and intended for public
+                  use. While easier to set up, you're granting us permission to
+                  send emails from your address. We promise not to do anything
+                  nefarious, and strongly recommend you
                   <a
                     class="inline-link"
                     href="https://github.com/mattnovelli/pebble-message"
@@ -547,9 +546,9 @@
         </div>
 
         <div class="section">
-          <h2>Message Routing</h2>
+          <h3>Message Routing</h3>
           <div class="row">
-            <label for="targetEmail">Target Outlook Email Address</label>
+            <label for="targetEmail">Your Outlook Email Address</label>
             <input
               id="targetEmail"
               type="email"
@@ -563,19 +562,16 @@
         </div>
 
         <div class="section">
-          <h2>Behavior</h2>
+          <h3>Behavior</h3>
           <div class="toggle-row">
             <input id="quitAfterSend" type="checkbox" />
-            <label for="quitAfterSend">Quit app after message send </label>
+            <label for="quitAfterSend">Quit app after a message is sent </label>
           </div>
         </div>
 
         <div class="section">
-          <h2>Contacts</h2>
-          <div class="help">
-            Add as many contacts as you want. Only entries with both a name and
-            phone are saved.
-          </div>
+          <h3>Contacts</h3>
+
           <div id="contactsList" class="contact-list"></div>
           <div id="contactsEmpty" class="help">
             No contacts yet. Add one to get started.

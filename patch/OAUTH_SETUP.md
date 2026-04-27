@@ -107,6 +107,18 @@ Notes:
    - `pebblejs://close#<encoded-json>`
 7. PKJS saves settings and continues using refresh tokens for renewal.
 
+### Token Renewal Behavior (Updated)
+
+- PKJS refreshes the access token before send when expiry is near.
+- Refresh calls are serialized so concurrent sends reuse the same in-flight refresh.
+- Transient refresh failures (network/timeouts/5xx) are retried with bounded exponential backoff.
+- If refresh fails with definitive auth errors (for example `invalid_grant` or `interaction_required`), the app reports that sign-in is required.
+
+Important:
+
+- With a browser-based SPA redirect URI, periodic interactive sign-in can still be required by Entra token policy.
+- The app can usually avoid hourly sign-in prompts via refresh tokens, but cannot guarantee indefinite zero-interaction renewal in this architecture.
+
 ## Testing
 
 1. Open Pebble app settings for Patch.

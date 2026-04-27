@@ -54,6 +54,22 @@
           "type": "raw",
           "name": "SENT_SEQUENCE",
           "file": "Pebble_80x80_Sent.pdc"
+        },
+        {
+          "type": "png",
+          "name": "MENU_ICON",
+          "file": "25x25.png",
+          "menuIcon": true
+        },
+          {
+          "type": "png",
+          "name": "50",
+          "file": "50x50.png"
+        },
+          {
+          "type": "png",
+          "name": "80",
+          "file": "80x80.png"
         }
       ]
     }
