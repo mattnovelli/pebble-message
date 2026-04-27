@@ -2,7 +2,7 @@
 
 This folder contains the hosted OAuth receiver/config website for the Pebble app.
 
-## Publish This Folder
+## Publish This Folder!
 
 1. In GitHub repository settings, open Pages.
 2. Set source to branch `main` and folder `/docs`.
