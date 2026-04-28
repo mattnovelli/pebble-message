@@ -110,10 +110,10 @@ Notes:
 
 ### Token Renewal Behavior (Updated)
 
-- PKJS refreshes the access token before send when expiry is near.
-- Refresh calls are serialized so concurrent sends reuse the same in-flight refresh.
-- Transient refresh failures (network/timeouts/5xx) are retried with bounded exponential backoff.
-- If refresh fails with definitive auth errors (for example `invalid_grant` or `interaction_required`), the app reports that sign-in is required.
+- PKJS checks token freshness before send and delegates refresh to the hosted config page when renewal is needed.
+- Refresh token redemption happens in browser context, then the page returns updated settings back to PKJS.
+- PKJS serializes concurrent refresh requests so one hosted refresh can satisfy multiple pending sends.
+- If hosted refresh fails with definitive auth errors (for example `invalid_grant`, `interaction_required`, or SPA redemption restrictions), the app reports that sign-in is required.
 
 Important:
 

@@ -649,12 +649,18 @@ function parseRefreshFailure(status, responseText) {
   }
 
   var normalizedDescription = errorDescription.toLowerCase();
+  var isSpaRefreshRestriction =
+    errorCode === 'invalid_request' &&
+    (normalizedDescription.indexOf('aadsts90023') !== -1 ||
+      normalizedDescription.indexOf('single-page application') !== -1 ||
+      normalizedDescription.indexOf('cross-origin requests') !== -1);
   var retryable = status === 0 || status === 408 || status === 429 || status >= 500 ||
     errorCode === 'temporarily_unavailable' || errorCode === 'server_error' || errorCode === 'timeout';
   var requiresReauth = status === 401 || status === 403 ||
     errorCode === 'invalid_grant' || errorCode === 'interaction_required' ||
     errorCode === 'invalid_client' || errorCode === 'unauthorized_client' ||
     errorCode === 'consent_required' ||
+    isSpaRefreshRestriction ||
     (status === 400 && normalizedDescription.indexOf('invalid_grant') !== -1);
 
   if (requiresReauth) {
@@ -687,6 +693,48 @@ function parseRefreshFailure(status, responseText) {
 
 function getRefreshRetryDelayMs(attemptNumber) {
   return TOKEN_REFRESH_BASE_RETRY_MS * Math.pow(2, attemptNumber - 1);
+}
+
+function buildConfigPageUrl(settings, authConfig, options) {
+  var opts = options || {};
+  var authState = typeof opts.authState === 'number' ? opts.authState : getAuthState(settings);
+  var autoPersist = typeof opts.autoPersist === 'undefined'
+    ? authState === AUTH_STATE_REAUTH_REQUIRED
+    : !!opts.autoPersist;
+
+  var sep = CONFIG_PAGE_URL.indexOf('?') === -1 ? '?' : '&';
+  var parts = [
+    't=' + Date.now(),
+    'settings=' + encodeURIComponent(JSON.stringify(settings)),
+    'client_id=' + encodeURIComponent(authConfig.clientId),
+    'tenant=' + encodeURIComponent(authConfig.tenantId),
+    'scope=' + encodeURIComponent(authConfig.scope),
+    'auth_state=' + authState,
+    'auto_persist=' + (autoPersist ? '1' : '0')
+  ];
+
+  if (opts.autoRefresh) {
+    parts.push('auto_refresh=1');
+  }
+
+  if (opts.autoClose) {
+    parts.push('auto_close=1');
+  }
+
+  return CONFIG_PAGE_URL + sep + parts.join('&');
+}
+
+function triggerHostedTokenRefresh(settings, authConfig) {
+  var authState = getAuthState(settings);
+  var configURL = buildConfigPageUrl(settings, authConfig, {
+    authState: authState,
+    autoPersist: true,
+    autoRefresh: true,
+    autoClose: true
+  });
+
+  console.log('Opening config URL for hosted token refresh: ' + configURL);
+  Pebble.openURL(configURL);
 }
 
 // Refresh access token using refresh token
@@ -852,27 +900,11 @@ function ensureValidToken(callback) {
     return;
   }
 
+  console.log('Delegating token refresh to hosted browser flow');
   s_refreshInFlight = true;
   queueRefreshWaiter(callback);
 
-  refreshAccessTokenWithRetry(authConfig, graph.refreshToken, function(error, tokens) {
-    if (error) {
-      console.log('Token refresh failed after retries: ' + JSON.stringify(error));
-      if (error.requiresReauth) {
-        sendAuthStateToWatch(AUTH_STATE_REAUTH_REQUIRED);
-      }
-      flushRefreshWaiters(error, null);
-      return;
-    }
-
-    var latestSettings = getSettings();
-    latestSettings.graph = tokens;
-    setSettings(latestSettings);
-
-    console.log('Token refresh complete. New expiry: ' + tokens.expiresAt);
-    sendAuthStateToWatch(AUTH_STATE_OK);
-    flushRefreshWaiters(null, tokens.accessToken);
-  });
+  triggerHostedTokenRefresh(settings, authConfig);
 }
 
 // Hosted configuration page approach (GitHub Pages, custom domain, etc.)
@@ -881,18 +913,9 @@ Pebble.addEventListener('showConfiguration', function() {
   var settings = getSettings();
   var authConfig = getAuthConfig(settings);
   var authState = getAuthState(settings);
-  var autoPersist = authState === AUTH_STATE_REAUTH_REQUIRED ? '1' : '0';
-
-  var sep = CONFIG_PAGE_URL.indexOf('?') === -1 ? '?' : '&';
-  var configURL = CONFIG_PAGE_URL + sep + [
-    't=' + Date.now(),
-    'settings=' + encodeURIComponent(JSON.stringify(settings)),
-    'client_id=' + encodeURIComponent(authConfig.clientId),
-    'tenant=' + encodeURIComponent(authConfig.tenantId),
-    'scope=' + encodeURIComponent(authConfig.scope),
-    'auth_state=' + authState,
-    'auto_persist=' + autoPersist
-  ].join('&');
+  var configURL = buildConfigPageUrl(settings, authConfig, {
+    authState: authState
+  });
 
   console.log('Opening config URL: ' + configURL);
   Pebble.openURL(configURL);
@@ -903,6 +926,7 @@ Pebble.addEventListener('showConfiguration', function() {
 Pebble.addEventListener('webviewclosed', function(e) {
   console.log('=== Configuration closed ===');
   console.log('Response: ' + (e.response || 'No response'));
+  var parsedSettings = null;
   
   if (e.response) {
     try {
@@ -911,10 +935,35 @@ Pebble.addEventListener('webviewclosed', function(e) {
       console.log('New settings: ' + JSON.stringify(newSettings));
       setSettings(newSettings);
       sendContactsToWatch();
+      parsedSettings = newSettings;
     } catch (error) {
       console.log('Error parsing config response: ' + error);
     }
   }
+
+  if (!s_refreshInFlight) {
+    return;
+  }
+
+  var latestSettings = parsedSettings || getSettings();
+  var refreshedGraph = (latestSettings && latestSettings.graph) || {};
+  var refreshedAccessToken = String(refreshedGraph.accessToken || '');
+  var refreshedExpiresAt = Number(refreshedGraph.expiresAt || 0);
+  var hasFreshToken = !!refreshedAccessToken &&
+    (!refreshedExpiresAt || (Date.now() + TOKEN_REFRESH_BUFFER_MS < refreshedExpiresAt));
+
+  if (hasFreshToken) {
+    console.log('Hosted token refresh complete. New expiry: ' + refreshedExpiresAt);
+    sendAuthStateToWatch(AUTH_STATE_OK);
+    flushRefreshWaiters(null, refreshedAccessToken);
+    return;
+  }
+
+  var refreshError = createTokenError('reauth_required', 'Session expired - open settings and sign in again', {
+    requiresReauth: true
+  });
+  sendAuthStateToWatch(AUTH_STATE_REAUTH_REQUIRED);
+  flushRefreshWaiters(refreshError, null);
 });
 
 console.log('=== JAVASCRIPT FILE FULLY LOADED ===');

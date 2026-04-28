@@ -1,6 +1,6 @@
-<img src="docs\img\patch-header.svg" />
+<img style="max-height:5em" src="docs\img\patch-header.svg" />
 
-## Voice-to-Text Messaging for iOS
+## Voice-to-Text Messaging for Pebble on iOS
 
 Patch harnesses the power of iOS automation to send text messages from your Pebble.
 

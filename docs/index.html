@@ -809,6 +809,14 @@
           return (getParam("auto_persist") || "") === "1";
         }
 
+        function shouldAutoRefreshToken() {
+          return (getParam("auto_refresh") || "") === "1";
+        }
+
+        function shouldAutoCloseAfterRefresh() {
+          return (getParam("auto_close") || "") === "1";
+        }
+
         function normalizeCustomClientId(value) {
           var v = String(value || "").trim();
           if (!v || v === PROVIDED_CLIENT_ID) {
@@ -1138,6 +1146,31 @@
           setAuthStatus("Signed in.", true);
         }
 
+        function applyTokenResponse(
+          data,
+          clientId,
+          tenant,
+          fallbackRefreshToken,
+          fallbackScope,
+        ) {
+          if (!data || !data.access_token) {
+            return false;
+          }
+
+          currentSettings.graph = {
+            accessToken: data.access_token,
+            refreshToken: data.refresh_token || fallbackRefreshToken || "",
+            expiresIn: data.expires_in,
+            tokenType: data.token_type,
+            scope: data.scope || fallbackScope || getScope(),
+            clientId: clientId,
+            tenantId: tenant,
+            expiresAt: Date.now() + (data.expires_in || 3600) * 1000,
+          };
+
+          return true;
+        }
+
         function exchangeCodeForToken(code, expectedState) {
           var state = getParam("state");
           var verifier = sessionStorage.getItem(SESSION_VERIFIER_KEY);
@@ -1196,16 +1229,20 @@
                 var data = JSON.parse(xhr.responseText);
 
                 readFormIntoSettings();
-                currentSettings.graph = {
-                  accessToken: data.access_token,
-                  refreshToken: data.refresh_token,
-                  expiresIn: data.expires_in,
-                  tokenType: data.token_type,
-                  scope: data.scope,
-                  clientId: clientId,
-                  tenantId: tenant,
-                  expiresAt: Date.now() + (data.expires_in || 3600) * 1000,
-                };
+                if (
+                  !applyTokenResponse(
+                    data,
+                    clientId,
+                    tenant,
+                    (currentSettings.graph &&
+                      currentSettings.graph.refreshToken) ||
+                      "",
+                    scope,
+                  )
+                ) {
+                  setAuthStatus("Token response missing access token.", false);
+                  return;
+                }
 
                 sessionStorage.removeItem(SESSION_VERIFIER_KEY);
                 sessionStorage.removeItem(SESSION_STATE_KEY);
@@ -1257,6 +1294,127 @@
           xhr.send(body);
         }
 
+        function refreshTokenViaBrowser() {
+          readFormIntoSettings();
+
+          var existingGraph = currentSettings.graph || {};
+          var refreshToken = String(existingGraph.refreshToken || "").trim();
+          if (!refreshToken) {
+            setAuthStatus(
+              "No refresh token is available. Please sign in again.",
+              false,
+            );
+            if (shouldAutoCloseAfterRefresh()) {
+              cancelAndClose();
+            }
+            return;
+          }
+
+          var clientId = isUsingCustomClient()
+            ? normalizeCustomClientId(document.getElementById("clientId").value)
+            : PROVIDED_CLIENT_ID;
+          if (!clientId) {
+            setAuthStatus(
+              "Client ID is required before refreshing token.",
+              false,
+            );
+            if (shouldAutoCloseAfterRefresh()) {
+              cancelAndClose();
+            }
+            return;
+          }
+
+          var tenant = getTenant();
+          var scope = getScope();
+
+          setAuthStatus("Refreshing sign-in token...", false);
+
+          var tokenUrl =
+            "https://login.microsoftonline.com/" +
+            encodeURIComponent(tenant) +
+            "/oauth2/v2.0/token";
+          var body = [
+            "client_id=" + encodeURIComponent(clientId),
+            "scope=" + encodeURIComponent(scope),
+            "refresh_token=" + encodeURIComponent(refreshToken),
+            "grant_type=refresh_token",
+          ].join("&");
+
+          var xhr = new XMLHttpRequest();
+          xhr.open("POST", tokenUrl, true);
+          xhr.setRequestHeader(
+            "Content-Type",
+            "application/x-www-form-urlencoded",
+          );
+          xhr.onload = function () {
+            if (xhr.status === 200) {
+              try {
+                var data = JSON.parse(xhr.responseText);
+
+                if (
+                  !applyTokenResponse(
+                    data,
+                    clientId,
+                    tenant,
+                    refreshToken,
+                    scope,
+                  )
+                ) {
+                  setAuthStatus("Token response missing access token.", false);
+                  if (shouldAutoCloseAfterRefresh()) {
+                    cancelAndClose();
+                  }
+                  return;
+                }
+
+                sessionStorage.setItem(
+                  SESSION_DRAFT_KEY,
+                  JSON.stringify(currentSettings),
+                );
+                updateReturnLink();
+                renderAuthStatus();
+
+                if (shouldAutoCloseAfterRefresh()) {
+                  setAuthStatus("Signed in. Returning to Pebble...", true);
+                  saveAndClose();
+                  return;
+                }
+
+                setAuthStatus(
+                  "Signed in. Tokens refreshed. Press Save to return to Pebble.",
+                  true,
+                );
+              } catch (err) {
+                setAuthStatus("Failed to parse refresh response.", false);
+                if (shouldAutoCloseAfterRefresh()) {
+                  cancelAndClose();
+                }
+              }
+            } else {
+              setAuthStatus(
+                "Token refresh failed: HTTP " +
+                  xhr.status +
+                  '<br><span class="mono">' +
+                  escapeHtml(xhr.responseText) +
+                  "</span>",
+                false,
+              );
+              if (shouldAutoCloseAfterRefresh()) {
+                cancelAndClose();
+              }
+            }
+          };
+
+          xhr.onerror = function () {
+            setAuthStatus("Network error while refreshing token.", false);
+            if (shouldAutoCloseAfterRefresh()) {
+              cancelAndClose();
+            }
+          };
+
+          xhr.send(body);
+        }
+
         function maybeHandleOAuthCallback() {
           var error = getParam("error");
           var code = getParam("code");
@@ -1270,6 +1428,11 @@
 
           if (code && expectedState) {
             exchangeCodeForToken(code, expectedState);
+            return;
+          }
+
+          if (shouldAutoRefreshToken()) {
+            refreshTokenViaBrowser();
           }
         }
 
