@@ -1,7 +1,7 @@
 {
   "name": "patch",
   "author": "Matthew Novelli",
-  "version": "0.1",
+  "version": "0.1.1",
   "description": "Patch is a Pebble voice-to-message relay app that enables iOS to users send text messages through a frankly insane workaround.",
   "homepage": "https://mattnovelli.github.io/pebble-message/",
   "repository": {
@@ -19,7 +19,7 @@
     "reply",
     "ios",
     "voice-messaging"
-      ],
+  ],
   "private": true,
   "dependencies": {
     "pebble-clay": "^1.0.4"
@@ -44,7 +44,7 @@
     ],
     "messageKeys": [
       "KEY_CONTACT_INDEX",
-      "KEY_VOICE_TEXT", 
+      "KEY_VOICE_TEXT",
       "KEY_ERROR",
       "KEY_STATUS",
       "KEY_CONTACT_NAMES",
@@ -64,12 +64,12 @@
           "file": "25x25.png",
           "menuIcon": true
         },
-          {
+        {
           "type": "png",
           "name": "50",
           "file": "50x50.png"
         },
-          {
+        {
           "type": "png",
           "name": "80",
           "file": "80x80.png"
