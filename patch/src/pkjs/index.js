@@ -428,6 +428,7 @@ function normalizeGraphForStorage(graph) {
     scope: String(g.scope || ''),
     clientId: String(g.clientId || ''),
     tenantId: String(g.tenantId || ''),
+    redirectUri: String(g.redirectUri || ''),
     expiresAt: Number(g.expiresAt || 0)
   };
 }
@@ -638,9 +639,44 @@ function getAuthConfig(settings) {
   return {
     clientId: normalizedClientId,
     tenantId: normalizeTenantId(graph.tenantId),
+    redirectUri: String(graph.redirectUri || OAUTH_CONFIG.redirectUri),
     scope: (graph.scope || OAUTH_CONFIG.scope),
     hasInvalidClientId: invalidStoredCustomClient
   };
+}
+
+function getOriginFromUri(uri) {
+  var value = String(uri || '').trim();
+  if (!value) {
+    return '';
+  }
+
+  try {
+    if (typeof URL === 'function') {
+      return new URL(value).origin;
+    }
+  } catch (e) {
+    // Fall through to regex fallback for runtimes without URL support.
+  }
+
+  var match = value.match(/^[a-zA-Z][a-zA-Z0-9+.-]*:\/\/[^\/?#]+/);
+  return match ? match[0] : '';
+}
+
+function setTokenRequestHeaders(xhr, redirectUri) {
+  xhr.setRequestHeader('Content-Type', 'application/x-www-form-urlencoded');
+
+  var origin = getOriginFromUri(redirectUri || OAUTH_CONFIG.redirectUri);
+  if (!origin) {
+    return;
+  }
+
+  try {
+    xhr.setRequestHeader('Origin', origin);
+    console.log('Token request Origin header set: ' + origin);
+  } catch (e) {
+    console.log('Token request Origin header unavailable: ' + e);
+  }
 }
 
 function queueRefreshWaiter(callback) {
@@ -698,11 +734,18 @@ function parseTokenEndpointFailure(status, responseText, options) {
     isSpaRefreshRestriction ||
     (status === 400 && normalizedDescription.indexOf('invalid_grant') !== -1);
 
+  var reauthMessage = opts.reauthMessage || 'Session expired - open settings and sign in again';
+  if (isSpaRefreshRestriction) {
+    reauthMessage = opts.spaRestrictionMessage ||
+      'Sign-in blocked by Entra app type - configure the app as Web/native (not SPA-only) and sign in again';
+  }
+
   if (requiresReauth) {
-    return createTokenError('reauth_required', opts.reauthMessage || 'Session expired - open settings and sign in again', {
+    return createTokenError('reauth_required', reauthMessage, {
       status: status,
       errorCode: errorCode,
       errorDescription: errorDescription,
+      isSpaRestriction: isSpaRefreshRestriction,
       responseText: responseText || '',
       requiresReauth: true
     });
@@ -729,6 +772,7 @@ function parseTokenEndpointFailure(status, responseText, options) {
 function parseRefreshFailure(status, responseText) {
   return parseTokenEndpointFailure(status, responseText, {
     reauthMessage: 'Session expired - open settings and sign in again',
+    spaRestrictionMessage: 'Token refresh blocked by Entra app type - configure the app as Web/native (not SPA-only) and sign in again',
     retryCode: 'refresh_retryable',
     retryMessage: 'Temporary network/auth service issue while refreshing sign-in',
     failureCode: 'refresh_failed',
@@ -739,6 +783,7 @@ function parseRefreshFailure(status, responseText) {
 function parseCodeRedeemFailure(status, responseText) {
   return parseTokenEndpointFailure(status, responseText, {
     reauthMessage: 'Sign-in could not be completed - open settings and sign in again',
+    spaRestrictionMessage: 'Sign-in blocked by Entra app type - configure the app as Web/native (not SPA-only) and sign in again',
     retryCode: 'redeem_retryable',
     retryMessage: 'Temporary network/auth service issue while completing sign-in',
     failureCode: 'redeem_failed',
@@ -757,6 +802,7 @@ function buildConfigPageSettingsPayload(settings, authConfig) {
     graph: {
       clientId: authConfig.clientId,
       tenantId: authConfig.tenantId,
+      redirectUri: authConfig.redirectUri,
       scope: authConfig.scope
     },
     targetEmail: String(source.targetEmail || ''),
@@ -806,6 +852,7 @@ function applyTokenDataToSettings(settings, tokenData, authConfig) {
     scope: String(tokenData.scope || cfg.scope || sourceGraph.scope || OAUTH_CONFIG.scope),
     clientId: String(tokenData.clientId || cfg.clientId || sourceGraph.clientId || OAUTH_CONFIG.clientId),
     tenantId: String(tokenData.tenantId || cfg.tenantId || sourceGraph.tenantId || OAUTH_CONFIG.tenantId),
+    redirectUri: String(tokenData.redirectUri || cfg.redirectUri || sourceGraph.redirectUri || OAUTH_CONFIG.redirectUri),
     expiresAt: expiresAt
   };
 
@@ -839,7 +886,7 @@ function refreshAccessToken(authConfig, refreshToken, callback) {
 
   xhr.open('POST', tokenUrl);
   xhr.timeout = TOKEN_REFRESH_TIMEOUT_MS;
-  xhr.setRequestHeader('Content-Type', 'application/x-www-form-urlencoded');
+  setTokenRequestHeaders(xhr, authConfig.redirectUri);
   
   xhr.onreadystatechange = function() {
     if (xhr.readyState !== 4) {
@@ -868,6 +915,7 @@ function refreshAccessToken(authConfig, refreshToken, callback) {
           scope: response.scope || authConfig.scope,
           clientId: authConfig.clientId,
           tenantId: authConfig.tenantId,
+          redirectUri: authConfig.redirectUri,
           expiresAt: Date.now() + ((response.expires_in || 3600) * 1000)
         });
       } catch (e) {
@@ -956,7 +1004,7 @@ function redeemAuthorizationCode(authPayload, callback) {
 
   xhr.open('POST', tokenUrl);
   xhr.timeout = TOKEN_REFRESH_TIMEOUT_MS;
-  xhr.setRequestHeader('Content-Type', 'application/x-www-form-urlencoded');
+  setTokenRequestHeaders(xhr, authPayload.redirectUri);
 
   xhr.onreadystatechange = function() {
     if (xhr.readyState !== 4) {
@@ -984,6 +1032,7 @@ function redeemAuthorizationCode(authPayload, callback) {
           scope: response.scope || authPayload.scope,
           clientId: authPayload.clientId,
           tenantId: authPayload.tenantId,
+          redirectUri: authPayload.redirectUri,
           expiresAt: Date.now() + ((response.expires_in || 3600) * 1000)
         });
       } catch (e) {
@@ -1163,6 +1212,7 @@ function mergePersistedSettingsFromConfigResponse(newSettings) {
 
   var nextClientId = normalizeClientId(incomingGraph.clientId || existingGraph.clientId);
   var nextTenantId = normalizeTenantId(incomingGraph.tenantId || existingGraph.tenantId);
+  var nextRedirectUri = String(incomingGraph.redirectUri || existingGraph.redirectUri || OAUTH_CONFIG.redirectUri);
   var nextScope = String(incomingGraph.scope || existingGraph.scope || OAUTH_CONFIG.scope);
 
   var existingClientId = normalizeClientId(existingGraph.clientId || OAUTH_CONFIG.clientId);
@@ -1184,6 +1234,7 @@ function mergePersistedSettingsFromConfigResponse(newSettings) {
 
   merged.graph.clientId = nextClientId;
   merged.graph.tenantId = nextTenantId;
+  merged.graph.redirectUri = nextRedirectUri;
   merged.graph.scope = nextScope;
 
   if (authConfigChanged) {

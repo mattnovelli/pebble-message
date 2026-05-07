@@ -1193,6 +1193,7 @@
           currentSettings.graph = currentSettings.graph || {};
           currentSettings.graph.clientId = clientId;
           currentSettings.graph.tenantId = tenant;
+          currentSettings.graph.redirectUri = receiverUri();
           currentSettings.graph.scope = scope;
           currentSettings.graphAuth = {
             code: String(code || ""),
