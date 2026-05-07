@@ -16,13 +16,14 @@ This Pebble smartwatch application is a critical component in a larger workflow 
 2. **Pebble JavaScript Companion (PebbleKit JS)** - `src/pkjs/index.js`
    - Manages contact storage and configuration
    - Opens hosted OAuth/config page and consumes returned settings JSON
+   - Redeems OAuth authorization codes and refresh tokens directly in PKJS
    - Integrates with Microsoft Graph API for email sending
    - Formats voice messages into structured JSON for iOS processing
 
 3. **Hosted OAuth Receiver (GitHub Pages)** - `../docs/index.html`
    - Handles Microsoft OAuth Authorization Code + PKCE flow
-   - Receives callback and exchanges authorization code for tokens
-   - Returns settings to Pebble via `pebblejs://close#...`
+   - Receives callback and packages `code` + PKCE verifier metadata for PKJS
+   - Returns settings payload to Pebble via `pebblejs://close#...`
 
 4. **iOS Shortcut (External Component)**
    - Monitors incoming emails from the Pebble app
@@ -77,7 +78,7 @@ The application sends emails with a specific structure that the iOS Shortcut rec
 
 - Uses Microsoft Graph OAuth 2.0 authorization code grant flow
 - Uses PKCE from a hosted config page (GitHub Pages)
-- Supports automatic token refresh when tokens expire
+- PKJS performs automatic token refresh when tokens expire
 - Tokens are securely managed with expiration tracking
 - Implements CSRF protection with state parameters
 
@@ -88,7 +89,8 @@ The application sends emails with a specific structure that the iOS Shortcut rec
 1. **Microsoft Graph OAuth 2.0**
    - Azure AD app registration with Mail.Send permissions
    - OAuth authorization code grant flow
-   - Automatic token refresh capability
+   - Web redirect URI to hosted config page (not SPA for this flow)
+   - Automatic token refresh capability in PKJS
    - Required scopes: `Mail.Send`, `offline_access`
 
 2. **Target Email Address**
@@ -103,15 +105,16 @@ The application sends emails with a specific structure that the iOS Shortcut rec
 
 1. **Azure App Registration**
    - Register app in Azure Portal
-   - Configure redirect URI to the hosted config page URL
+   - Configure a **Web** redirect URI to the hosted config page URL
    - Grant Mail.Send and offline_access permissions
+   - Enable public client flows
    - Note Client ID and Tenant ID
 
 2. **Production Deployment**
    - Host `docs/index.html` on GitHub Pages (or equivalent static HTTPS host)
    - Use the same hosted URL in Azure redirect URI and PKJS `CONFIG_PAGE_URL`
-   - OAuth code exchange is handled in the hosted page (no backend required)
-   - Tokens are returned to Pebble through `pebblejs://close#...`
+   - Hosted page returns callback payload; PKJS handles token exchange/refresh (no backend required)
+   - Auth callback payload is returned to Pebble through `pebblejs://close#...`
 
 ### iOS Shortcut Configuration
 
@@ -134,7 +137,7 @@ The iOS Shortcut (not included in this repository) should:
 ### JavaScript-Side Errors
 
 - Microsoft Graph OAuth authentication failures
-- Token expiration and refresh failures
+- Token expiration, code redemption, and refresh failures
 - Network connectivity issues
 - Invalid email formatting
 - Missing configuration parameters
@@ -216,10 +219,11 @@ The iOS Shortcut (not included in this repository) should:
 
 1. **"Authentication failed"** - Complete OAuth sign-in via configuration page
 2. **"Token expired"** - App will automatically refresh; re-sign in if needed
-3. **"Network error"** - Check phone internet connectivity
-4. **"Invalid contact"** - Verify contact list configuration
-5. **"Email failed"** - Check Microsoft Graph API limits and permissions
-6. **"OAuth callback failed"** - Verify redirect URI configuration in Azure
+3. **"AADSTS9002326"** - Verify redirect URI is configured as Web (not SPA)
+4. **"Network error"** - Check phone internet connectivity
+5. **"Invalid contact"** - Verify contact list configuration
+6. **"Email failed"** - Check Microsoft Graph API limits and permissions
+7. **"OAuth callback failed"** - Verify redirect URI configuration in Azure
 
 ### Debugging
 

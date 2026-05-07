@@ -582,7 +582,7 @@
                       rel="noopener noreferrer"
                       >docs/index.html</a
                     >
-                    and add that URL as a SPA redirect URI.
+                    and add that URL as a Web redirect URI.
                   </li>
                   <li>
                     Grant <span class="mono">Mail.Send</span> and
@@ -759,6 +759,7 @@
         var currentSettings = {
           contacts: [],
           graph: {},
+          graphAuth: null,
           targetEmail: "",
           quitAfterSend: false,
           allLowercase: false,
@@ -808,14 +809,6 @@
 
         function shouldAutoPersistAfterAuth() {
           return (getParam("auto_persist") || "") === "1";
-        }
-
-        function shouldAutoRefreshToken() {
-          return (getParam("auto_refresh") || "") === "1";
-        }
-
-        function shouldAutoCloseAfterRefresh() {
-          return (getParam("auto_close") || "") === "1";
         }
 
         function normalizeCustomClientId(value) {
@@ -1011,11 +1004,11 @@
           var payload = JSON.stringify(currentSettings);
           var closeUrl = "pebblejs://close#" + encodeURIComponent(payload);
           var returnBtn = document.getElementById("returnButton");
+          var hasReturnPayload =
+            (currentSettings.graph && currentSettings.graph.accessToken) ||
+            (currentSettings.graphAuth && currentSettings.graphAuth.code);
           returnBtn.href = closeUrl;
-          returnBtn.style.display =
-            currentSettings.graph && currentSettings.graph.accessToken
-              ? "inline-block"
-              : "none";
+          returnBtn.style.display = hasReturnPayload ? "inline-block" : "none";
         }
 
         function mergeBaseSettings(obj) {
@@ -1024,6 +1017,7 @@
           }
           currentSettings.contacts = normalizeContacts(obj.contacts);
           currentSettings.graph = obj.graph || {};
+          currentSettings.graphAuth = obj.graphAuth || null;
           currentSettings.targetEmail = obj.targetEmail || "";
           currentSettings.quitAfterSend = !!obj.quitAfterSend;
           currentSettings.allLowercase = !!obj.allLowercase;
@@ -1120,10 +1114,22 @@
             }
           }
 
+          if (currentSettings.graphAuth && currentSettings.graphAuth.code) {
+            settings.graphAuth = currentSettings.graphAuth;
+          }
+
           currentSettings = settings;
         }
 
         function renderAuthStatus() {
+          if (currentSettings.graphAuth && currentSettings.graphAuth.code) {
+            setAuthStatus(
+              "Authorization complete. Press Save to finish sign-in in Pebble.",
+              true,
+            );
+            return;
+          }
+
           var g = currentSettings.graph || {};
           if (!g.accessToken) {
             setAuthStatus("Not signed in.", false);
@@ -1151,32 +1157,7 @@
           setAuthStatus("Signed in.", true);
         }
 
-        function applyTokenResponse(
-          data,
-          clientId,
-          tenant,
-          fallbackRefreshToken,
-          fallbackScope,
-        ) {
-          if (!data || !data.access_token) {
-            return false;
-          }
-
-          currentSettings.graph = {
-            accessToken: data.access_token,
-            refreshToken: data.refresh_token || fallbackRefreshToken || "",
-            expiresIn: data.expires_in,
-            tokenType: data.token_type,
-            scope: data.scope || fallbackScope || getScope(),
-            clientId: clientId,
-            tenantId: tenant,
-            expiresAt: Date.now() + (data.expires_in || 3600) * 1000,
-          };
-
-          return true;
-        }
-
-        function exchangeCodeForToken(code, expectedState) {
+        function stashAuthorizationCodeForPebble(code, expectedState) {
           var state = getParam("state");
           var verifier = sessionStorage.getItem(SESSION_VERIFIER_KEY);
 
@@ -1207,217 +1188,43 @@
           var tenant = getTenant();
           var scope = getScope();
 
-          setAuthStatus("Exchanging authorization code for tokens...", false);
-
-          var tokenUrl =
-            "https://login.microsoftonline.com/" +
-            encodeURIComponent(tenant) +
-            "/oauth2/v2.0/token";
-          var body = [
-            "client_id=" + encodeURIComponent(clientId),
-            "scope=" + encodeURIComponent(scope),
-            "code=" + encodeURIComponent(code),
-            "redirect_uri=" + encodeURIComponent(receiverUri()),
-            "grant_type=authorization_code",
-            "code_verifier=" + encodeURIComponent(verifier),
-          ].join("&");
-
-          var xhr = new XMLHttpRequest();
-          xhr.open("POST", tokenUrl, true);
-          xhr.setRequestHeader(
-            "Content-Type",
-            "application/x-www-form-urlencoded",
-          );
-          xhr.onload = function () {
-            if (xhr.status === 200) {
-              try {
-                var data = JSON.parse(xhr.responseText);
-
-                readFormIntoSettings();
-                if (
-                  !applyTokenResponse(
-                    data,
-                    clientId,
-                    tenant,
-                    (currentSettings.graph &&
-                      currentSettings.graph.refreshToken) ||
-                      "",
-                    scope,
-                  )
-                ) {
-                  setAuthStatus("Token response missing access token.", false);
-                  return;
-                }
-
-                sessionStorage.removeItem(SESSION_VERIFIER_KEY);
-                sessionStorage.removeItem(SESSION_STATE_KEY);
-                sessionStorage.setItem(
-                  SESSION_DRAFT_KEY,
-                  JSON.stringify(currentSettings),
-                );
-
-                updateReturnLink();
-                renderAuthStatus();
-
-                if (shouldAutoPersistAfterAuth()) {
-                  setAuthStatus(
-                    "Signed in. Tokens saved. Press Save to return to Pebble.",
-                    true,
-                  );
-                }
-
-                // Clean the URL after callback to avoid re-processing on refresh.
-                if (window.history && window.history.replaceState) {
-                  window.history.replaceState(
-                    {},
-                    document.title,
-                    receiverUri(),
-                  );
-                }
-              } catch (err) {
-                setAuthStatus("Failed to parse token response.", false);
-              }
-            } else {
-              setAuthStatus(
-                "Token exchange failed: HTTP " +
-                  xhr.status +
-                  '<br><span class="mono">' +
-                  escapeHtml(xhr.responseText) +
-                  "</span>",
-                false,
-              );
-            }
-          };
-
-          xhr.onerror = function () {
-            setAuthStatus(
-              "Network error while exchanging authorization code.",
-              false,
-            );
-          };
-
-          xhr.send(body);
-        }
-
-        function refreshTokenViaBrowser() {
           readFormIntoSettings();
 
-          var existingGraph = currentSettings.graph || {};
-          var refreshToken = String(existingGraph.refreshToken || "").trim();
-          if (!refreshToken) {
-            setAuthStatus(
-              "No refresh token is available. Please sign in again.",
-              false,
-            );
-            if (shouldAutoCloseAfterRefresh()) {
-              cancelAndClose();
-            }
-            return;
-          }
+          currentSettings.graph = currentSettings.graph || {};
+          currentSettings.graph.clientId = clientId;
+          currentSettings.graph.tenantId = tenant;
+          currentSettings.graph.scope = scope;
+          currentSettings.graphAuth = {
+            code: String(code || ""),
+            codeVerifier: verifier,
+            state: state,
+            redirectUri: receiverUri(),
+            clientId: clientId,
+            tenantId: tenant,
+            scope: scope,
+          };
 
-          var clientId = isUsingCustomClient()
-            ? normalizeCustomClientId(document.getElementById("clientId").value)
-            : PROVIDED_CLIENT_ID;
-          if (!clientId) {
-            setAuthStatus(
-              "Client ID is required before refreshing token.",
-              false,
-            );
-            if (shouldAutoCloseAfterRefresh()) {
-              cancelAndClose();
-            }
-            return;
-          }
-
-          var tenant = getTenant();
-          var scope = getScope();
-
-          setAuthStatus("Refreshing sign-in token...", false);
-
-          var tokenUrl =
-            "https://login.microsoftonline.com/" +
-            encodeURIComponent(tenant) +
-            "/oauth2/v2.0/token";
-          var body = [
-            "client_id=" + encodeURIComponent(clientId),
-            "scope=" + encodeURIComponent(scope),
-            "refresh_token=" + encodeURIComponent(refreshToken),
-            "grant_type=refresh_token",
-          ].join("&");
-
-          var xhr = new XMLHttpRequest();
-          xhr.open("POST", tokenUrl, true);
-          xhr.setRequestHeader(
-            "Content-Type",
-            "application/x-www-form-urlencoded",
+          sessionStorage.removeItem(SESSION_VERIFIER_KEY);
+          sessionStorage.removeItem(SESSION_STATE_KEY);
+          sessionStorage.setItem(
+            SESSION_DRAFT_KEY,
+            JSON.stringify(currentSettings),
           );
-          xhr.onload = function () {
-            if (xhr.status === 200) {
-              try {
-                var data = JSON.parse(xhr.responseText);
 
-                if (
-                  !applyTokenResponse(
-                    data,
-                    clientId,
-                    tenant,
-                    refreshToken,
-                    scope,
-                  )
-                ) {
-                  setAuthStatus("Token response missing access token.", false);
-                  if (shouldAutoCloseAfterRefresh()) {
-                    cancelAndClose();
-                  }
-                  return;
-                }
+          updateReturnLink();
+          renderAuthStatus();
 
-                sessionStorage.setItem(
-                  SESSION_DRAFT_KEY,
-                  JSON.stringify(currentSettings),
-                );
-                updateReturnLink();
-                renderAuthStatus();
+          if (shouldAutoPersistAfterAuth()) {
+            setAuthStatus(
+              "Sign-in complete. Press Save to return to Pebble.",
+              true,
+            );
+          }
 
-                if (shouldAutoCloseAfterRefresh()) {
-                  setAuthStatus("Signed in. Returning to Pebble...", true);
-                  saveAndClose();
-                  return;
-                }
-
-                setAuthStatus(
-                  "Signed in. Tokens refreshed. Press Save to return to Pebble.",
-                  true,
-                );
-              } catch (err) {
-                setAuthStatus("Failed to parse refresh response.", false);
-                if (shouldAutoCloseAfterRefresh()) {
-                  cancelAndClose();
-                }
-              }
-            } else {
-              setAuthStatus(
-                "Token refresh failed: HTTP " +
-                  xhr.status +
-                  '<br><span class="mono">' +
-                  escapeHtml(xhr.responseText) +
-                  "</span>",
-                false,
-              );
-              if (shouldAutoCloseAfterRefresh()) {
-                cancelAndClose();
-              }
-            }
-          };
-
-          xhr.onerror = function () {
-            setAuthStatus("Network error while refreshing token.", false);
-            if (shouldAutoCloseAfterRefresh()) {
-              cancelAndClose();
-            }
-          };
-
-          xhr.send(body);
+          // Clean the URL after callback to avoid re-processing on refresh.
+          if (window.history && window.history.replaceState) {
+            window.history.replaceState({}, document.title, receiverUri());
+          }
         }
 
         function maybeHandleOAuthCallback() {
@@ -1432,12 +1239,15 @@
           }
 
           if (code && expectedState) {
-            exchangeCodeForToken(code, expectedState);
+            stashAuthorizationCodeForPebble(code, expectedState);
             return;
           }
 
-          if (shouldAutoRefreshToken()) {
-            refreshTokenViaBrowser();
+          if (code && !expectedState) {
+            setAuthStatus(
+              "Missing OAuth session state. Please sign in again.",
+              false,
+            );
           }
         }
 
@@ -1460,6 +1270,9 @@
           }
 
           readFormIntoSettings();
+          if (currentSettings.graphAuth) {
+            delete currentSettings.graphAuth;
+          }
           sessionStorage.setItem(
             SESSION_DRAFT_KEY,
             JSON.stringify(currentSettings),

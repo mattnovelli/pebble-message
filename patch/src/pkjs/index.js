@@ -417,6 +417,21 @@ function normalizeContacts(contacts) {
   return normalized;
 }
 
+function normalizeGraphForStorage(graph) {
+  var g = graph || {};
+
+  return {
+    accessToken: String(g.accessToken || ''),
+    refreshToken: String(g.refreshToken || ''),
+    expiresIn: Number(g.expiresIn || 0),
+    tokenType: String(g.tokenType || ''),
+    scope: String(g.scope || ''),
+    clientId: String(g.clientId || ''),
+    tenantId: String(g.tenantId || ''),
+    expiresAt: Number(g.expiresAt || 0)
+  };
+}
+
 function getContactDisplayName(contact) {
   var c = normalizeContact(contact);
   if (!c.name) {
@@ -431,23 +446,19 @@ function getContactDisplayName(contact) {
 
 function getSettings() {
   try {
-    var parsed = JSON.parse(localStorage.getItem('settings')) || { 
-      contacts: [], 
-      graph: { accessToken: '' }, 
-      targetEmail: '',
-      quitAfterSend: false,
-      allLowercase: false
-    };
+    var parsed = JSON.parse(localStorage.getItem('settings')) || {};
 
-    parsed.contacts = normalizeContacts(parsed.contacts);
-    parsed.graph = parsed.graph || { accessToken: '' };
-    parsed.quitAfterSend = !!parsed.quitAfterSend;
-    parsed.allLowercase = !!parsed.allLowercase;
-    return parsed;
+    return {
+      contacts: normalizeContacts(parsed.contacts),
+      graph: normalizeGraphForStorage(parsed.graph),
+      targetEmail: String(parsed.targetEmail || ''),
+      quitAfterSend: !!parsed.quitAfterSend,
+      allLowercase: !!parsed.allLowercase
+    };
   } catch (e) {
-    return { 
-      contacts: [], 
-      graph: { accessToken: '' }, 
+    return {
+      contacts: [],
+      graph: normalizeGraphForStorage(null),
       targetEmail: '',
       quitAfterSend: false,
       allLowercase: false
@@ -457,11 +468,15 @@ function getSettings() {
 
 
 function setSettings(s) {
-  var normalized = s || {};
-  normalized.contacts = normalizeContacts(normalized.contacts);
-  normalized.graph = normalized.graph || { accessToken: '' };
-  normalized.quitAfterSend = !!normalized.quitAfterSend;
-  normalized.allLowercase = !!normalized.allLowercase;
+  var source = s || {};
+  var normalized = {
+    contacts: normalizeContacts(source.contacts),
+    graph: normalizeGraphForStorage(source.graph),
+    targetEmail: String(source.targetEmail || ''),
+    quitAfterSend: !!source.quitAfterSend,
+    allLowercase: !!source.allLowercase
+  };
+
   localStorage.setItem('settings', JSON.stringify(normalized));
 }
 
@@ -646,7 +661,8 @@ function flushRefreshWaiters(error, accessToken) {
   }
 }
 
-function parseRefreshFailure(status, responseText) {
+function parseTokenEndpointFailure(status, responseText, options) {
+  var opts = options || {};
   var parsed = null;
   var errorCode = '';
   var errorDescription = '';
@@ -667,20 +683,23 @@ function parseRefreshFailure(status, responseText) {
   var normalizedDescription = errorDescription.toLowerCase();
   var isSpaRefreshRestriction =
     errorCode === 'invalid_request' &&
-    (normalizedDescription.indexOf('aadsts90023') !== -1 ||
+    (normalizedDescription.indexOf('aadsts9002326') !== -1 ||
+      normalizedDescription.indexOf('aadsts90023') !== -1 ||
       normalizedDescription.indexOf('single-page application') !== -1 ||
-      normalizedDescription.indexOf('cross-origin requests') !== -1);
+      normalizedDescription.indexOf('cross-origin requests') !== -1 ||
+      normalizedDescription.indexOf('cross-origin token redemption') !== -1);
   var retryable = status === 0 || status === 408 || status === 429 || status >= 500 ||
     errorCode === 'temporarily_unavailable' || errorCode === 'server_error' || errorCode === 'timeout';
   var requiresReauth = status === 401 || status === 403 ||
     errorCode === 'invalid_grant' || errorCode === 'interaction_required' ||
+    errorCode === 'login_required' ||
     errorCode === 'invalid_client' || errorCode === 'unauthorized_client' ||
     errorCode === 'consent_required' ||
     isSpaRefreshRestriction ||
     (status === 400 && normalizedDescription.indexOf('invalid_grant') !== -1);
 
   if (requiresReauth) {
-    return createTokenError('reauth_required', 'Session expired - open settings and sign in again', {
+    return createTokenError('reauth_required', opts.reauthMessage || 'Session expired - open settings and sign in again', {
       status: status,
       errorCode: errorCode,
       errorDescription: errorDescription,
@@ -690,7 +709,7 @@ function parseRefreshFailure(status, responseText) {
   }
 
   if (retryable) {
-    return createTokenError('refresh_retryable', 'Temporary network/auth service issue while refreshing sign-in', {
+    return createTokenError(opts.retryCode || 'token_retryable', opts.retryMessage || 'Temporary network/auth service issue while requesting token', {
       status: status,
       errorCode: errorCode,
       errorDescription: errorDescription,
@@ -699,7 +718,7 @@ function parseRefreshFailure(status, responseText) {
     });
   }
 
-  return createTokenError('refresh_failed', 'Token refresh failed (HTTP ' + status + ')', {
+  return createTokenError(opts.failureCode || 'token_failed', (opts.failureMessagePrefix || 'Token request failed') + ' (HTTP ' + status + ')', {
     status: status,
     errorCode: errorCode,
     errorDescription: errorDescription,
@@ -707,8 +726,43 @@ function parseRefreshFailure(status, responseText) {
   });
 }
 
+function parseRefreshFailure(status, responseText) {
+  return parseTokenEndpointFailure(status, responseText, {
+    reauthMessage: 'Session expired - open settings and sign in again',
+    retryCode: 'refresh_retryable',
+    retryMessage: 'Temporary network/auth service issue while refreshing sign-in',
+    failureCode: 'refresh_failed',
+    failureMessagePrefix: 'Token refresh failed'
+  });
+}
+
+function parseCodeRedeemFailure(status, responseText) {
+  return parseTokenEndpointFailure(status, responseText, {
+    reauthMessage: 'Sign-in could not be completed - open settings and sign in again',
+    retryCode: 'redeem_retryable',
+    retryMessage: 'Temporary network/auth service issue while completing sign-in',
+    failureCode: 'redeem_failed',
+    failureMessagePrefix: 'Authorization code redemption failed'
+  });
+}
+
 function getRefreshRetryDelayMs(attemptNumber) {
   return TOKEN_REFRESH_BASE_RETRY_MS * Math.pow(2, attemptNumber - 1);
+}
+
+function buildConfigPageSettingsPayload(settings, authConfig) {
+  var source = settings || {};
+  return {
+    contacts: normalizeContacts(source.contacts),
+    graph: {
+      clientId: authConfig.clientId,
+      tenantId: authConfig.tenantId,
+      scope: authConfig.scope
+    },
+    targetEmail: String(source.targetEmail || ''),
+    quitAfterSend: !!source.quitAfterSend,
+    allLowercase: !!source.allLowercase
+  };
 }
 
 function buildConfigPageUrl(settings, authConfig, options) {
@@ -717,11 +771,12 @@ function buildConfigPageUrl(settings, authConfig, options) {
   var autoPersist = typeof opts.autoPersist === 'undefined'
     ? authState === AUTH_STATE_REAUTH_REQUIRED
     : !!opts.autoPersist;
+  var payload = buildConfigPageSettingsPayload(settings, authConfig);
 
   var sep = CONFIG_PAGE_URL.indexOf('?') === -1 ? '?' : '&';
   var parts = [
     't=' + Date.now(),
-    'settings=' + encodeURIComponent(JSON.stringify(settings)),
+    'settings=' + encodeURIComponent(JSON.stringify(payload)),
     'client_id=' + encodeURIComponent(authConfig.clientId),
     'tenant=' + encodeURIComponent(authConfig.tenantId),
     'scope=' + encodeURIComponent(authConfig.scope),
@@ -729,28 +784,32 @@ function buildConfigPageUrl(settings, authConfig, options) {
     'auto_persist=' + (autoPersist ? '1' : '0')
   ];
 
-  if (opts.autoRefresh) {
-    parts.push('auto_refresh=1');
-  }
-
-  if (opts.autoClose) {
-    parts.push('auto_close=1');
-  }
-
   return CONFIG_PAGE_URL + sep + parts.join('&');
 }
 
-function triggerHostedTokenRefresh(settings, authConfig) {
-  var authState = getAuthState(settings);
-  var configURL = buildConfigPageUrl(settings, authConfig, {
-    authState: authState,
-    autoPersist: true,
-    autoRefresh: true,
-    autoClose: true
-  });
+function applyTokenDataToSettings(settings, tokenData, authConfig) {
+  var sourceSettings = settings || getSettings();
+  var sourceGraph = sourceSettings.graph || {};
+  var cfg = authConfig || {};
+  var expiresIn = Number(tokenData.expiresIn || sourceGraph.expiresIn || 0);
+  var expiresAt = Number(tokenData.expiresAt || 0);
 
-  console.log('Opening config URL for hosted token refresh: ' + configURL);
-  Pebble.openURL(configURL);
+  if (!expiresAt) {
+    expiresAt = Date.now() + ((expiresIn || 3600) * 1000);
+  }
+
+  sourceSettings.graph = {
+    accessToken: String(tokenData.accessToken || sourceGraph.accessToken || ''),
+    refreshToken: String(tokenData.refreshToken || sourceGraph.refreshToken || ''),
+    expiresIn: expiresIn,
+    tokenType: String(tokenData.tokenType || sourceGraph.tokenType || 'Bearer'),
+    scope: String(tokenData.scope || cfg.scope || sourceGraph.scope || OAUTH_CONFIG.scope),
+    clientId: String(tokenData.clientId || cfg.clientId || sourceGraph.clientId || OAUTH_CONFIG.clientId),
+    tenantId: String(tokenData.tenantId || cfg.tenantId || sourceGraph.tenantId || OAUTH_CONFIG.tenantId),
+    expiresAt: expiresAt
+  };
+
+  return sourceSettings;
 }
 
 // Refresh access token using refresh token
@@ -869,6 +928,122 @@ function refreshAccessTokenWithRetry(authConfig, refreshToken, callback) {
   runAttempt(1);
 }
 
+function redeemAuthorizationCode(authPayload, callback) {
+  console.log('Redeeming authorization code in PKJS runtime...');
+  console.log('Redeem context: client=' + authPayload.clientId + ', tenant=' + authPayload.tenantId);
+
+  var tokenUrl = 'https://login.microsoftonline.com/' + authPayload.tenantId + '/oauth2/v2.0/token';
+  var body = [
+    'client_id=' + encodeURIComponent(authPayload.clientId),
+    'scope=' + encodeURIComponent(authPayload.scope),
+    'code=' + encodeURIComponent(authPayload.code),
+    'redirect_uri=' + encodeURIComponent(authPayload.redirectUri),
+    'grant_type=authorization_code',
+    'code_verifier=' + encodeURIComponent(authPayload.codeVerifier)
+  ].join('&');
+
+  var xhr = new XMLHttpRequest();
+  var completed = false;
+
+  function finish(error, tokenData) {
+    if (completed) {
+      return;
+    }
+
+    completed = true;
+    callback(error, tokenData);
+  }
+
+  xhr.open('POST', tokenUrl);
+  xhr.timeout = TOKEN_REFRESH_TIMEOUT_MS;
+  xhr.setRequestHeader('Content-Type', 'application/x-www-form-urlencoded');
+
+  xhr.onreadystatechange = function() {
+    if (xhr.readyState !== 4) {
+      return;
+    }
+
+    console.log('Authorization code redemption response status: ' + xhr.status);
+
+    if (xhr.status === 200) {
+      try {
+        var response = JSON.parse(xhr.responseText);
+
+        if (!response.access_token) {
+          finish(createTokenError('redeem_parse', 'Failed to parse sign-in response', {
+            responseText: xhr.responseText
+          }));
+          return;
+        }
+
+        finish(null, {
+          accessToken: response.access_token,
+          refreshToken: response.refresh_token || '',
+          expiresIn: response.expires_in || 3600,
+          tokenType: response.token_type,
+          scope: response.scope || authPayload.scope,
+          clientId: authPayload.clientId,
+          tenantId: authPayload.tenantId,
+          expiresAt: Date.now() + ((response.expires_in || 3600) * 1000)
+        });
+      } catch (e) {
+        console.log('Error parsing code redemption response: ' + e);
+        finish(createTokenError('redeem_parse', 'Failed to parse sign-in response', {
+          responseText: xhr.responseText
+        }));
+      }
+    } else {
+      console.log('Authorization code redemption failed body: ' + xhr.responseText);
+      finish(parseCodeRedeemFailure(xhr.status, xhr.responseText));
+    }
+  };
+
+  xhr.onerror = function() {
+    console.log('Authorization code redemption network error');
+    finish(createTokenError('redeem_network', 'Temporary network/auth service issue while completing sign-in', {
+      retryable: true,
+      status: 0
+    }));
+  };
+
+  xhr.ontimeout = function() {
+    console.log('Authorization code redemption timed out');
+    finish(createTokenError('redeem_timeout', 'Temporary network/auth service issue while completing sign-in', {
+      retryable: true,
+      status: 0
+    }));
+  };
+
+  xhr.send(body);
+}
+
+function redeemAuthorizationCodeWithRetry(authPayload, callback) {
+  function runAttempt(attemptNumber) {
+    console.log('Authorization code redemption attempt ' + attemptNumber + ' of ' + TOKEN_REFRESH_MAX_ATTEMPTS);
+
+    redeemAuthorizationCode(authPayload, function(error, tokens) {
+      if (!error) {
+        callback(null, tokens);
+        return;
+      }
+
+      var shouldRetry = error.retryable && attemptNumber < TOKEN_REFRESH_MAX_ATTEMPTS;
+      if (!shouldRetry) {
+        callback(error);
+        return;
+      }
+
+      var delayMs = getRefreshRetryDelayMs(attemptNumber);
+      console.log('Retryable redemption failure (' + error.code + '), retrying in ' + delayMs + 'ms');
+      setTimeout(function() {
+        runAttempt(attemptNumber + 1);
+      }, delayMs);
+    });
+  }
+
+  runAttempt(1);
+}
+
 // Check if token needs refresh and refresh if necessary
 function ensureValidToken(callback) {
   var settings = getSettings();
@@ -916,11 +1091,27 @@ function ensureValidToken(callback) {
     return;
   }
 
-  console.log('Delegating token refresh to hosted browser flow');
+  console.log('Refreshing token directly in PKJS runtime');
   s_refreshInFlight = true;
   queueRefreshWaiter(callback);
 
-  triggerHostedTokenRefresh(settings, authConfig);
+  refreshAccessTokenWithRetry(authConfig, graph.refreshToken, function(error, tokens) {
+    if (error) {
+      console.log('Token refresh failed in PKJS: ' + JSON.stringify(error));
+      if (error.requiresReauth) {
+        sendAuthStateToWatch(AUTH_STATE_REAUTH_REQUIRED);
+      }
+      flushRefreshWaiters(error, null);
+      return;
+    }
+
+    var latestSettings = getSettings();
+    var mergedSettings = applyTokenDataToSettings(latestSettings, tokens, authConfig);
+    setSettings(mergedSettings);
+
+    sendAuthStateToWatch(AUTH_STATE_OK);
+    flushRefreshWaiters(null, tokens.accessToken);
+  });
 }
 
 // Hosted configuration page approach (GitHub Pages, custom domain, etc.)
@@ -938,49 +1129,136 @@ Pebble.addEventListener('showConfiguration', function() {
 });
 
 
+function extractGraphAuthPayloadFromSettings(settings) {
+  var payload = settings && settings.graphAuth;
+  if (!payload || typeof payload !== 'object') {
+    return null;
+  }
+
+  var sourceGraph = (settings && settings.graph) || {};
+  var code = String(payload.code || '').trim();
+  var codeVerifier = String(payload.codeVerifier || '').trim();
+  var redirectUri = String(payload.redirectUri || '').trim();
+
+  if (!code || !codeVerifier || !redirectUri) {
+    return null;
+  }
+
+  return {
+    code: code,
+    codeVerifier: codeVerifier,
+    redirectUri: redirectUri,
+    state: String(payload.state || ''),
+    clientId: normalizeClientId(payload.clientId || sourceGraph.clientId),
+    tenantId: normalizeTenantId(payload.tenantId || sourceGraph.tenantId),
+    scope: String(payload.scope || sourceGraph.scope || OAUTH_CONFIG.scope)
+  };
+}
+
+function mergePersistedSettingsFromConfigResponse(newSettings) {
+  var incoming = newSettings || {};
+  var existing = getSettings();
+  var existingGraph = existing.graph || {};
+  var incomingGraph = incoming.graph || {};
+
+  var nextClientId = normalizeClientId(incomingGraph.clientId || existingGraph.clientId);
+  var nextTenantId = normalizeTenantId(incomingGraph.tenantId || existingGraph.tenantId);
+  var nextScope = String(incomingGraph.scope || existingGraph.scope || OAUTH_CONFIG.scope);
+
+  var existingClientId = normalizeClientId(existingGraph.clientId || OAUTH_CONFIG.clientId);
+  var existingTenantId = normalizeTenantId(existingGraph.tenantId || OAUTH_CONFIG.tenantId);
+  var existingScope = String(existingGraph.scope || OAUTH_CONFIG.scope);
+
+  var authConfigChanged =
+    nextClientId !== existingClientId ||
+    nextTenantId !== existingTenantId ||
+    nextScope !== existingScope;
+
+  var merged = {
+    contacts: normalizeContacts(incoming.contacts),
+    graph: normalizeGraphForStorage(existingGraph),
+    targetEmail: String(incoming.targetEmail || ''),
+    quitAfterSend: !!incoming.quitAfterSend,
+    allLowercase: !!incoming.allLowercase
+  };
+
+  merged.graph.clientId = nextClientId;
+  merged.graph.tenantId = nextTenantId;
+  merged.graph.scope = nextScope;
+
+  if (authConfigChanged) {
+    merged.graph.accessToken = '';
+    merged.graph.refreshToken = '';
+    merged.graph.expiresIn = 0;
+    merged.graph.tokenType = '';
+    merged.graph.expiresAt = 0;
+  }
+
+  return merged;
+}
+
 // Handle configuration results
 Pebble.addEventListener('webviewclosed', function(e) {
   console.log('=== Configuration closed ===');
   console.log('Response: ' + (e.response || 'No response'));
+
   var parsedSettings = null;
-  
+  var authPayload = null;
+
   if (e.response) {
     try {
       var newSettings = JSON.parse(decodeURIComponent(e.response));
       newSettings.quitAfterSend = !!newSettings.quitAfterSend;
       newSettings.allLowercase = !!newSettings.allLowercase;
-      console.log('New settings: ' + JSON.stringify(newSettings));
-      setSettings(newSettings);
+
+      authPayload = extractGraphAuthPayloadFromSettings(newSettings);
+      if (newSettings.graphAuth) {
+        delete newSettings.graphAuth;
+      }
+
+      var mergedSettings = mergePersistedSettingsFromConfigResponse(newSettings);
+      console.log('New settings: ' + JSON.stringify(mergedSettings));
+      setSettings(mergedSettings);
       sendContactsToWatch();
-      parsedSettings = newSettings;
+      parsedSettings = mergedSettings;
     } catch (error) {
       console.log('Error parsing config response: ' + error);
     }
   }
 
-  if (!s_refreshInFlight) {
+  if (!authPayload) {
     return;
   }
 
-  var latestSettings = parsedSettings || getSettings();
-  var refreshedGraph = (latestSettings && latestSettings.graph) || {};
-  var refreshedAccessToken = String(refreshedGraph.accessToken || '');
-  var refreshedExpiresAt = Number(refreshedGraph.expiresAt || 0);
-  var hasFreshToken = !!refreshedAccessToken &&
-    (!refreshedExpiresAt || (Date.now() + TOKEN_REFRESH_BUFFER_MS < refreshedExpiresAt));
+  redeemAuthorizationCodeWithRetry(authPayload, function(error, tokens) {
+    if (error) {
+      console.log('Authorization code redemption failed: ' + JSON.stringify(error));
 
-  if (hasFreshToken) {
-    console.log('Hosted token refresh complete. New expiry: ' + refreshedExpiresAt);
+      if (error.requiresReauth) {
+        sendAuthStateToWatch(AUTH_STATE_REAUTH_REQUIRED);
+      }
+
+      var errorMsg = {};
+      errorMsg[KEY_ERROR] = getTokenErrorMessage(error);
+      Pebble.sendAppMessage(errorMsg);
+      return;
+    }
+
+    var latestSettings = parsedSettings || getSettings();
+    var authConfig = {
+      clientId: authPayload.clientId,
+      tenantId: authPayload.tenantId,
+      scope: authPayload.scope
+    };
+    var mergedSettings = applyTokenDataToSettings(latestSettings, tokens, authConfig);
+    setSettings(mergedSettings);
+
     sendAuthStateToWatch(AUTH_STATE_OK);
-    flushRefreshWaiters(null, refreshedAccessToken);
-    return;
-  }
 
-  var refreshError = createTokenError('reauth_required', 'Session expired - open settings and sign in again', {
-    requiresReauth: true
+    var statusMsg = {};
+    statusMsg[KEY_STATUS] = 'Sign-in complete';
+    Pebble.sendAppMessage(statusMsg);
   });
-  sendAuthStateToWatch(AUTH_STATE_REAUTH_REQUIRED);
-  flushRefreshWaiters(refreshError, null);
 });
 
 console.log('=== JAVASCRIPT FILE FULLY LOADED ===');
