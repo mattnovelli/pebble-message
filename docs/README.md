@@ -10,7 +10,7 @@ This folder contains the hosted OAuth receiver/config website for the Pebble app
 
 Expected URL for this repository:
 
-- https://mattnovelli.github.io/pebble-message/
+- https://mattnovelli.github.io/patch/
 
 ## App Wiring
 

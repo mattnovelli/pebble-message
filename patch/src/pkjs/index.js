@@ -571,7 +571,7 @@ Pebble.addEventListener('ready', function() {
 var OAUTH_CONFIG = {
   clientId: 'b9260194-8028-48ae-8907-e30182eda409', // Shared default client ID (BYO override available in config page)
   tenantId: 'common', // Use 'common' for multi-tenant, or your specific tenant ID
-  redirectUri: 'https://mattnovelli.github.io/pebble-message/', // Hosted OAuth receiver page (GitHub Pages /docs)
+  redirectUri: 'https://mattnovelli.github.io/patch/', // Hosted OAuth receiver page (GitHub Pages /docs)
   scope: 'https://graph.microsoft.com/Mail.Send offline_access',
   responseType: 'code', // Using authorization code with PKCE
   responseMode: 'query' // Authorization code callback in query params

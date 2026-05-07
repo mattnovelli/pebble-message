@@ -42,7 +42,7 @@ Publish it with GitHub Pages:
 
 Expected URL for this repository:
 
-- `https://mattnovelli.github.io/pebble-message/`
+- `https://mattnovelli.github.io/patch/`
 
 This URL becomes your OAuth redirect URI and Pebble config URL.
 
@@ -83,7 +83,7 @@ Update `src/pkjs/index.js`:
 var OAUTH_CONFIG = {
   clientId: "b9260194-8028-48ae-8907-e30182eda409",
   tenantId: "common",
-  redirectUri: "https://mattnovelli.github.io/pebble-message/",
+  redirectUri: "https://mattnovelli.github.io/patch/",
   scope: "https://graph.microsoft.com/Mail.Send offline_access",
   responseType: "code",
   responseMode: "query",
