@@ -1,5 +1,5 @@
 <!doctype html>
-<html>
+<html lang="en">
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
@@ -518,6 +518,23 @@
           grid-template-columns: 1fr;
         }
       }
+
+      :focus-visible {
+        outline: 2px solid var(--accent);
+        outline-offset: 2px;
+      }
+
+      .visually-hidden {
+        position: absolute;
+        width: 1px;
+        height: 1px;
+        padding: 0;
+        margin: -1px;
+        overflow: hidden;
+        clip: rect(0, 0, 0, 0);
+        white-space: nowrap;
+        border: 0;
+      }
     </style>
   </head>
   <body>
@@ -537,10 +554,10 @@
         />
       </h1>
       <div class="card">
-        <h2>
+        <!-- <h2>
           Harness the power of iOS Automations to send text messages from your
           Pebble.
-        </h2>
+        </h2> -->
         <p>
           Patch uses Outlook to <i>send an email to yourself</i>, which triggers
           a Shortcuts automation to intercept the notification and send the text
@@ -566,7 +583,7 @@
         </div>
       </div>
       <div class="card warning-card">
-        <h2>Heads up!</h2>
+        <h2>Important</h2>
         <p>
           Patch stores Outlook OAuth tokens and contact phone numbers in your
           Pebble App's browser storage.
@@ -577,12 +594,9 @@
           send mail. For best safety, create a new Outlook account for Patch.
         </p>
       </div>
-      <div class="card">
-        <div
-          class="section"
-          style="margin-top: 0; padding-top: 0; border-top: 0"
-        ></div>
-        <h2>Setup</h2>
+      <details id="setupCard" class="card troubleshooting-card">
+        <summary>Setup</summary>
+        <div class="troubleshooting-content">
         <h3>Prerequisites</h3>
         <ol>
           <li>
@@ -636,6 +650,7 @@
             <img
               class="automation-config-image"
               src="img/automation-config.png"
+              alt="iOS Shortcuts automation configuration showing: Sender is example@outlook.com, Subject contains Patch, and Run Immediately is enabled"
             />
             <!-- </div> -->
           </li>
@@ -644,17 +659,27 @@
             Shortcut library.
           </li>
         </ol>
-      </div>
+        </div>
+      </details>
 
-      <div class="card">
-        <h2>Configuration</h2>
+      <details id="configCard" class="card troubleshooting-card" open>
+        <summary>Configuration</summary>
+        <div class="troubleshooting-content">
 
         <div
           class="section"
           style="margin-top: 0; padding-top: 0; border-top: 0"
         >
           <h3>Outlook Authentication</h3>
-          <div id="authStatus" class="status">Not signed in.</div>
+          <div id="authStatus" class="status" role="status" aria-live="polite" aria-atomic="true">Not signed in.</div>
+          <button
+            id="signOutButton"
+            class="btn secondary"
+            type="button"
+            style="display: none; margin-top: 8px"
+          >
+            Sign Out
+          </button>
           <div class="help">Choose one sign-in option:</div>
 
           <div class="auth-options">
@@ -802,7 +827,7 @@
         <div class="section">
           <h3>Contacts</h3>
 
-          <div id="contactsList" class="contact-list"></div>
+          <div id="contactsList" class="contact-list" role="list" aria-label="Contacts"></div>
           <div id="contactsEmpty" class="help">
             No contacts yet. Add one to get started.
           </div>
@@ -819,7 +844,7 @@
             Hold the middle button on a contact to select and send a canned
             message.
           </div>
-          <div id="cannedList" class="canned-list"></div>
+          <div id="cannedList" class="canned-list" role="list" aria-label="Canned messages"></div>
           <div id="cannedEmpty" class="help">No canned messages yet.</div>
           <div class="btn-row" style="margin-top: 10px">
             <button id="addCannedButton" class="secondary" type="button">
@@ -834,7 +859,8 @@
             Cancel
           </button>
         </div>
-      </div>
+        </div>
+      </details>
 
       <details class="card troubleshooting-card">
         <summary>Troubleshooting</summary>
@@ -1042,10 +1068,6 @@
           return (getParam("scope") || DEFAULT_SCOPE).trim();
         }
 
-        function shouldAutoPersistAfterAuth() {
-          return (getParam("auto_persist") || "") === "1";
-        }
-
         function normalizeCustomClientId(value) {
           var v = String(value || "").trim();
           if (!v || v === PROVIDED_CLIENT_ID) {
@@ -1183,10 +1205,11 @@
         function createContactRow(contact) {
           var row = document.createElement("div");
           row.className = "contact-row";
+          row.setAttribute("role", "listitem");
           row.innerHTML = [
             '<div class="field">',
             "<label>Emoji</label>",
-            '<select class="contact-emoji"></select>',
+            '<select class="contact-emoji" aria-label="Contact emoji"></select>',
             "</div>",
             '<div class="field">',
             "<label>Contact Name</label>",
@@ -1196,7 +1219,7 @@
             "<label>Contact Phone</label>",
             '<input type="tel" class="contact-phone" placeholder="2178675309" />',
             "</div>",
-            '<button type="button" class="secondary remove-contact">Remove</button>',
+            '<button type="button" class="secondary remove-contact" aria-label="Remove contact">Remove</button>',
           ].join("");
 
           var emojiSelect = row.querySelector(".contact-emoji");
@@ -1233,12 +1256,13 @@
         function createCannedRow(textValue) {
           var row = document.createElement("div");
           row.className = "canned-row";
+          row.setAttribute("role", "listitem");
           row.innerHTML = [
             '<div class="field">',
             "<label>Message</label>",
-            '<input type="text" class="canned-text" maxlength="140" placeholder="On my way" />',
+            '<input type="text" class="canned-text" maxlength="140" placeholder="On my way" aria-label="Canned message text" />',
             "</div>",
-            '<button type="button" class="secondary remove-canned">Remove</button>',
+            '<button type="button" class="secondary remove-canned" aria-label="Remove canned message">Remove</button>',
           ].join("");
 
           row.querySelector(".canned-text").value = String(textValue || "");
@@ -1316,7 +1340,7 @@
           var closeUrl = "pebblejs://close#" + encodeURIComponent(payload);
           var returnBtn = document.getElementById("returnButton");
           var hasReturnPayload =
-            (currentSettings.graph && currentSettings.graph.accessToken) ||
+            currentSettings._authState === 1 ||
             (currentSettings.graphAuth && currentSettings.graphAuth.code);
           returnBtn.href = closeUrl;
           returnBtn.style.display = hasReturnPayload ? "inline-block" : "none";
@@ -1349,6 +1373,12 @@
               console.log("Failed to parse initial settings: " + e);
             }
           }
+
+          // Read auth_state from URL (set by PKJS based on actual token validity)
+          var authStateParam = getParam("auth_state");
+          currentSettings._authState = authStateParam
+            ? parseInt(authStateParam, 10)
+            : 0;
 
           document.getElementById("targetEmail").value =
             currentSettings.targetEmail || "";
@@ -1464,43 +1494,53 @@
             settings.graphAuth = currentSettings.graphAuth;
           }
 
+          if (currentSettings.logout) {
+            settings.logout = true;
+          }
+
           currentSettings = settings;
         }
 
         function renderAuthStatus() {
+          var signOutBtn = document.getElementById("signOutButton");
+
           if (currentSettings.graphAuth && currentSettings.graphAuth.code) {
             setAuthStatus(
               "Authorization complete. Press Save to finish sign-in in Pebble.",
               true,
             );
+            if (signOutBtn) signOutBtn.style.display = "none";
             return;
           }
 
-          var g = currentSettings.graph || {};
-          if (!g.accessToken) {
-            setAuthStatus("Not signed in.", false);
+          // Use auth_state from PKJS as source of truth (tokens are not sent to config page)
+          var authState = currentSettings._authState || 0;
+
+          if (authState === 1) {
+            // AUTH_STATE_OK
+            setAuthStatus("Signed in.", true);
+            if (signOutBtn) signOutBtn.style.display = "inline-block";
             return;
           }
 
-          var expiresAt = g.expiresAt || 0;
-          if (expiresAt && Date.now() > expiresAt) {
-            setAuthStatus(
-              "Signed in token expired. Re-authenticate to continue.",
-              false,
-            );
+          if (authState === 2) {
+            // AUTH_STATE_REAUTH_REQUIRED
+            setAuthStatus("Session expired. Sign in again to continue.", false);
+            if (signOutBtn) signOutBtn.style.display = "none";
             return;
           }
 
-          if (expiresAt) {
-            setAuthStatus(
-              "Signed in. Token expires: " +
-                new Date(expiresAt).toLocaleString(),
-              true,
-            );
-            return;
-          }
+          // Default: not signed in
+          setAuthStatus("Not signed in.", false);
+          if (signOutBtn) signOutBtn.style.display = "none";
+        }
 
-          setAuthStatus("Signed in.", true);
+        function handleSignOut() {
+          currentSettings.graphAuth = null;
+          currentSettings.logout = true;
+          currentSettings._authState = 0;
+          renderAuthStatus();
+          saveAndClose();
         }
 
         function stashAuthorizationCodeForPebble(code, expectedState) {
@@ -1561,12 +1601,12 @@
           updateReturnLink();
           renderAuthStatus();
 
-          if (shouldAutoPersistAfterAuth()) {
-            setAuthStatus(
-              "Sign-in complete. Press Save to return to Pebble.",
-              true,
-            );
-          }
+          // Auto-save after successful OAuth callback so the user doesn't have
+          // to scroll down and manually press Save. The form was already persisted
+          // to session draft before the OAuth redirect.
+          setAuthStatus("Sign-in complete. Returning to Pebble\u2026", true);
+          saveAndClose();
+          return;
 
           // Clean the URL after callback to avoid re-processing on refresh.
           if (window.history && window.history.replaceState) {
@@ -1725,6 +1765,9 @@
             .getElementById("loginButton")
             .addEventListener("click", beginLogin);
           document
+            .getElementById("signOutButton")
+            .addEventListener("click", handleSignOut);
+          document
             .getElementById("saveButton")
             .addEventListener("click", saveAndClose);
           document
@@ -1737,6 +1780,19 @@
         renderAuthStatus();
         updateReturnLink();
         maybeHandleOAuthCallback();
+
+        // Persist collapsible section open/closed state
+        ["setupCard", "configCard"].forEach(function (id) {
+          var el = document.getElementById(id);
+          if (!el) return;
+          var key = "patch_section_" + id;
+          var saved = localStorage.getItem(key);
+          if (saved === "open") el.setAttribute("open", "");
+          else if (saved === "closed") el.removeAttribute("open");
+          el.addEventListener("toggle", function () {
+            localStorage.setItem(key, el.open ? "open" : "closed");
+          });
+        });
       })();
     </script>
   </body>

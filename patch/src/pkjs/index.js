@@ -747,6 +747,30 @@ Pebble.addEventListener('ready', function() {
   sendContactsToWatch();
   sendCannedMessagesToWatch();
 
+  // Proactive token refresh: if token is near expiry or expired, attempt refresh now
+  // rather than waiting until the next send attempt.
+  var settings = getSettings();
+  var graph = settings.graph || {};
+  if (graph.refreshToken && graph.expiresAt) {
+    var now = Date.now();
+    if (now + TOKEN_REFRESH_BUFFER_MS >= graph.expiresAt) {
+      console.log('Proactive token refresh on ready: token expired or near expiry');
+      ensureValidToken(function(error, accessToken) {
+        if (error) {
+          console.log('Proactive refresh failed: ' + (error.code || 'unknown') + ' - ' + (error.message || ''));
+          if (error.requiresReauth) {
+            sendAuthStateToWatch(AUTH_STATE_REAUTH_REQUIRED);
+          }
+        } else {
+          console.log('Proactive refresh succeeded on ready');
+          sendAuthStateToWatch(AUTH_STATE_OK);
+        }
+      });
+    } else {
+      sendAuthStateToWatch(AUTH_STATE_OK);
+    }
+  }
+
   if (localStorage.getItem(DEBUG_HEARTBEAT_STORAGE_KEY) === '1') {
     setInterval(function() {
       console.log('=== JS HEARTBEAT === ' + new Date().toISOString());
@@ -1094,10 +1118,15 @@ function refreshAccessToken(authConfig, refreshToken, callback) {
           return;
         }
 
-        console.log('Token refresh successful');
+        var newRefreshToken = response.refresh_token || '';
+        if (!newRefreshToken) {
+          console.log('WARNING: Refresh response did not include a new refresh_token. This may indicate the Entra app is configured as SPA (limited refresh token lifetime).');
+        }
+
+        console.log('Token refresh successful. New expires_in=' + (response.expires_in || 'unset') + ', refresh_token_rotated=' + !!newRefreshToken);
         finish(null, {
           accessToken: response.access_token,
-          refreshToken: response.refresh_token || refreshToken,
+          refreshToken: newRefreshToken || refreshToken,
           expiresIn: response.expires_in || 3600,
           tokenType: response.token_type,
           scope: response.scope || authConfig.scope,
@@ -1342,6 +1371,13 @@ function ensureValidToken(callback) {
       return;
     }
 
+    // Validate the new token has a meaningful future expiry
+    var newExpiresAt = tokens.expiresAt || 0;
+    var minAcceptableExpiry = Date.now() + (5 * 60 * 1000); // 5 minutes from now
+    if (newExpiresAt && newExpiresAt < minAcceptableExpiry) {
+      console.log('WARNING: Refreshed token expires too soon (' + Math.round((newExpiresAt - Date.now()) / 1000) + 's). Possible Entra app configuration issue.');
+    }
+
     var latestSettings = getSettings();
     var mergedSettings = applyTokenDataToSettings(latestSettings, tokens, authConfig);
     setSettings(mergedSettings);
@@ -1452,6 +1488,33 @@ Pebble.addEventListener('webviewclosed', function(e) {
       var newSettings = JSON.parse(decodeURIComponent(e.response));
       newSettings.quitAfterSend = !!newSettings.quitAfterSend;
       newSettings.allLowercase = !!newSettings.allLowercase;
+
+      // Phase 2: Handle logout request from config page
+      if (newSettings.logout) {
+        console.log('Logout requested from config page');
+        delete newSettings.logout;
+        if (newSettings.graphAuth) {
+          delete newSettings.graphAuth;
+        }
+
+        var mergedSettings = mergePersistedSettingsFromConfigResponse(newSettings);
+        // Clear all auth tokens
+        mergedSettings.graph.accessToken = '';
+        mergedSettings.graph.refreshToken = '';
+        mergedSettings.graph.expiresIn = 0;
+        mergedSettings.graph.expiresAt = 0;
+        mergedSettings.graph.tokenType = '';
+
+        setSettings(mergedSettings);
+        sendContactsToWatch();
+        sendCannedMessagesToWatch();
+        sendAuthStateToWatch(AUTH_STATE_REAUTH_REQUIRED);
+
+        var statusMsg = {};
+        statusMsg[KEY_STATUS] = 'Signed out';
+        Pebble.sendAppMessage(statusMsg);
+        return;
+      }
 
       authPayload = extractGraphAuthPayloadFromSettings(newSettings);
       if (newSettings.graphAuth) {
