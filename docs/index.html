@@ -434,6 +434,11 @@
         display: flex;
         align-items: center;
         gap: 10px;
+        margin-bottom: 10px;
+      }
+
+      .toggle-row:last-child {
+        margin-bottom: 0;
       }
 
       .toggle-row input[type="checkbox"] {
@@ -564,13 +569,10 @@
           message.
         </p>
         <p>
-          Patch uses Outlook since it's free and supports push notifications to
-          iOS.
+          The whole process takes around ten seconds and requires no interaction
+          after you hit send on the Pebble.
         </p>
-        <p>
-          The whole process takes less than ten seconds and requires no
-          interaction after you hit send on the Pebble.
-        </p>
+
         <div class="btn-row" style="margin-top: 10px">
           <a
             class="btn discord"
@@ -597,268 +599,292 @@
       <details id="setupCard" class="card troubleshooting-card">
         <summary>Setup</summary>
         <div class="troubleshooting-content">
-        <h3>Prerequisites</h3>
-        <ol>
-          <li>
-            A
-            <a
-              target="_blank"
-              rel="noopener noreferrer"
-              href="https://outlook.office.com/mail/"
-              >Microsoft Outlook account</a
-            >
-            added to the native iOS Mail App
-            <a
-              target="_blank"
-              rel="noopener noreferrer"
-              href="https://support.microsoft.com/en-us/office/set-up-an-outlook-account-on-the-ios-mail-app-7e5b180f-bc8f-45cc-8da1-5cefc1e633d1"
-              >(Guide)</a
-            >. The email must end with "@outlook.com". Be sure the account is
-            set to <b>push</b> notifications, not fetch.
-          </li>
-          <li>
-            <a
-              target="_blank"
-              rel="noopener noreferrer"
-              href="https://apps.apple.com/us/app/shortcuts/id915249334"
-              >Shortcuts</a
-            >
-            installed on the iOS device you want to send messages from.
-          </li>
-        </ol>
+          <h3>Prerequisites</h3>
+          <ol>
+            <li>
+              A
+              <a
+                target="_blank"
+                rel="noopener noreferrer"
+                href="https://outlook.office.com/mail/"
+                >Microsoft Outlook account</a
+              >
+              added to the native iOS Mail App
+              <a
+                target="_blank"
+                rel="noopener noreferrer"
+                href="https://support.microsoft.com/en-us/office/set-up-an-outlook-account-on-the-ios-mail-app-7e5b180f-bc8f-45cc-8da1-5cefc1e633d1"
+                >(guide)</a
+              >. The email must end with "@outlook.com". Be sure the account is
+              set to <b>push</b> notifications, not fetch.
+            </li>
+            <li>
+              <a
+                target="_blank"
+                rel="noopener noreferrer"
+                href="https://apps.apple.com/us/app/shortcuts/id915249334"
+                >Shortcuts</a
+              >
+              installed on the iOS device you want to send messages from.
+            </li>
+          </ol>
 
-        <h3>Shortcuts Automation Setup</h3>
-        <ol>
-          <li>
-            Install the
-            <a
-              target="_blank"
-              rel="noopener noreferrer"
-              href="https://www.icloud.com/shortcuts/adfee071536340ff8638f53fba50ad56"
-              >Patch iOS Shortcut</a
-            >.
-          </li>
-          <li>
-            In the Shortcuts app, navigate to the <b>Automations</b> tab. Create
-            a new automation and select <b>Email</b>.
-          </li>
+          <h3>Automation</h3>
+          <ol>
+            <li>
+              Install the
+              <a
+                target="_blank"
+                rel="noopener noreferrer"
+                href="https://www.icloud.com/shortcuts/adfee071536340ff8638f53fba50ad56"
+                >Patch iOS Shortcut</a
+              >.
+            </li>
+            <li>In the Shortcuts app, click the <b>Automations</b> tab.</li>
+            <li>Create a new automation and select <b>Email</b>.</li>
 
-          <li>
-            Configure the following, using your outlook email instead of
-            "example@outlook.com":
-            <!-- <div class="shortcut-table-wrap"> -->
-            <img
-              class="automation-config-image"
-              src="img/automation-config.png"
-              alt="iOS Shortcuts automation configuration showing: Sender is example@outlook.com, Subject contains Patch, and Run Immediately is enabled"
-            />
-            <!-- </div> -->
-          </li>
-          <li>
-            Click <b>Next</b>. Then, select the <b>Patch</b> Shortcut from your
-            Shortcut library.
-          </li>
-        </ol>
+            <li>
+              Configure the following, using your outlook email instead of
+              "example@outlook.com":
+              <!-- <div class="shortcut-table-wrap"> -->
+              <img
+                class="automation-config-image"
+                src="img/automation-config.png"
+                alt="iOS Shortcuts automation configuration showing: Sender is example@outlook.com, Subject contains Patch, and Run Immediately is enabled"
+              />
+              <!-- </div> -->
+            </li>
+            <li>
+              Click <b>Next</b>. Then, select the <b>Patch</b> Shortcut from
+              your Shortcut library.
+            </li>
+            <li>
+              Sign in to outlook and enter your email in the
+              <b>Configuration</b> section (below), set your preferences, and
+              test!
+            </li>
+            <li>
+              See <b>Troubleshooting</b> at the bottom of this page if you
+              experience problems.
+            </li>
+          </ol>
         </div>
       </details>
 
       <details id="configCard" class="card troubleshooting-card" open>
         <summary>Configuration</summary>
         <div class="troubleshooting-content">
-
-        <div
-          class="section"
-          style="margin-top: 0; padding-top: 0; border-top: 0"
-        >
-          <h3>Outlook Authentication</h3>
-          <div id="authStatus" class="status" role="status" aria-live="polite" aria-atomic="true">Not signed in.</div>
-          <button
-            id="signOutButton"
-            class="btn secondary"
-            type="button"
-            style="display: none; margin-top: 8px"
+          <div
+            class="section"
+            style="margin-top: 0; padding-top: 0; border-top: 0"
           >
-            Sign Out
-          </button>
-          <div class="help">Choose one sign-in option:</div>
+            <h3>Outlook Authentication</h3>
+            <div class="help">Choose one sign-in option:</div>
 
-          <div class="auth-options">
-            <div class="option-card">
-              <label class="option-select"
-                ><input
-                  id="authOptionShared"
-                  type="radio"
-                  name="authOption"
-                  value="shared"
-                  checked
-                />
-                <span class="option-title">Option 1: Patch Client</span></label
-              >
-              <div class="option-content">
-                <div class="help">
-                  This Patch-managed sign-in app is intended for public use.
-                  Choosing this option grants the app permission to send emails
-                  from your Outlook account. We promise not to do anything
-                  nefarious, and strongly recommend you
-                  <a
-                    class="inline-link"
-                    href="https://github.com/mattnovelli/patch"
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    >review the code on GitHub before continuing.</a
-                  >
-                </div>
-                <div class="btn-row option-actions">
-                  <button id="loginButton" class="primary" type="button">
-                    Sign in with Microsoft
-                  </button>
-                  <a
-                    id="returnButton"
-                    class="btn secondary"
-                    href="#"
-                    style="display: none"
-                    >Return to Pebble</a
-                  >
-                </div>
-              </div>
-            </div>
-
-            <div class="option-card">
-              <label class="option-select"
-                ><input
-                  id="authOptionCustom"
-                  type="radio"
-                  name="authOption"
-                  value="custom"
-                />
-                <span class="option-title"
-                  >Option 2: Set up your own Entra app</span
-                ></label
-              >
-              <div
-                id="customClientDetails"
-                class="option-content"
-                style="display: none"
-              >
-                <div class="row">
-                  <label for="clientId">Custom Microsoft Entra Client ID</label>
-                  <input
-                    id="clientId"
-                    type="text"
-                    placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+            <div class="auth-options">
+              <div class="option-card">
+                <label class="option-select"
+                  ><input
+                    id="authOptionShared"
+                    type="radio"
+                    name="authOption"
+                    value="shared"
+                    checked
                   />
-                </div>
-                <ol class="tutorial">
-                  <li>
-                    Start from
+                  <span class="option-title"
+                    >Option 1: Patch Client</span
+                  ></label
+                >
+                <div class="option-content">
+                  <div class="help">
+                    This Patch-managed sign-in app is intended for public use.
+                    Choosing this option grants the app permission to send
+                    emails from your Outlook account. We promise not to do
+                    anything nefarious, and strongly recommend you
                     <a
                       class="inline-link"
                       href="https://github.com/mattnovelli/patch"
                       target="_blank"
                       rel="noopener noreferrer"
-                      >github.com/mattnovelli/patch</a
-                    >.
-                  </li>
-                  <li>
-                    Follow
-                    <a
-                      class="inline-link"
-                      href="https://github.com/mattnovelli/patch/blob/main/patch/OAUTH_SETUP.md"
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      >patch/OAUTH_SETUP.md</a
-                    >.
-                  </li>
-                  <li>
-                    Publish your own copy of
-                    <a
-                      class="inline-link"
-                      href="https://github.com/mattnovelli/patch/blob/main/docs/index.html"
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      >docs/index.html</a
+                      >review the code on GitHub before continuing.</a
                     >
-                    and add that URL as a Web redirect URI.
-                  </li>
-                  <li>
-                    Grant <span class="mono">Mail.Send</span> and
-                    <span class="mono">offline_access</span>, enable public
-                    client flows, then paste your Client ID.
-                  </li>
-                  <li>
-                    <div id="receiverInfo"></div>
-                  </li>
-                </ol>
+                  </div>
+                  <div class="btn-row option-actions">
+                    <button id="loginButton" class="primary" type="button">
+                      Sign in with Microsoft
+                    </button>
+                  </div>
+                  <div
+                    id="authStatus"
+                    class="status"
+                    role="status"
+                    aria-live="polite"
+                    aria-atomic="true"
+                    style="margin-top: 10px"
+                  >
+                    Not signed in.
+                  </div>
+                  <button
+                    id="signOutButton"
+                    class="btn secondary"
+                    type="button"
+                    style="display: none; margin-top: 8px"
+                  >
+                    Sign Out
+                  </button>
+                </div>
+              </div>
+
+              <div class="option-card">
+                <label class="option-select"
+                  ><input
+                    id="authOptionCustom"
+                    type="radio"
+                    name="authOption"
+                    value="custom"
+                  />
+                  <span class="option-title"
+                    >Option 2: Set up your own Entra app</span
+                  ></label
+                >
+                <div
+                  id="customClientDetails"
+                  class="option-content"
+                  style="display: none"
+                >
+                  <div class="row">
+                    <label for="clientId"
+                      >Custom Microsoft Entra Client ID</label
+                    >
+                    <input
+                      id="clientId"
+                      type="text"
+                      placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+                    />
+                  </div>
+                  <ol class="tutorial">
+                    <li>
+                      Start from
+                      <a
+                        class="inline-link"
+                        href="https://github.com/mattnovelli/patch"
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        >github.com/mattnovelli/patch</a
+                      >.
+                    </li>
+                    <li>
+                      Follow
+                      <a
+                        class="inline-link"
+                        href="https://github.com/mattnovelli/patch/blob/main/patch/OAUTH_SETUP.md"
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        >patch/OAUTH_SETUP.md</a
+                      >.
+                    </li>
+                    <li>
+                      Publish your own copy of
+                      <a
+                        class="inline-link"
+                        href="https://github.com/mattnovelli/patch/blob/main/docs/index.html"
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        >docs/index.html</a
+                      >
+                      and add that URL as a Web redirect URI.
+                    </li>
+                    <li>
+                      Grant <span class="mono">Mail.Send</span> and
+                      <span class="mono">offline_access</span>, enable public
+                      client flows, then paste your Client ID.
+                    </li>
+                    <li>
+                      <div id="receiverInfo"></div>
+                    </li>
+                  </ol>
+                </div>
               </div>
             </div>
           </div>
-        </div>
 
-        <div class="section">
-          <h3>Email Address</h3>
-          <div class="row">
-            <label for="targetEmail">Your Outlook Email Address</label>
-            <input
-              id="targetEmail"
-              type="email"
-              placeholder="recipient@outlook.com"
-            />
-            <div class="help">
-              Messages are sent to this mailbox, where your iOS Shortcut can
-              process them.
+          <div class="section">
+            <h3>Email Address</h3>
+            <div class="row">
+              <label for="targetEmail">Your Outlook Email Address</label>
+              <input
+                id="targetEmail"
+                type="email"
+                placeholder="recipient@outlook.com"
+              />
+              <div class="help">
+                Messages are sent to this mailbox, where your iOS Shortcut can
+                process them.
+              </div>
             </div>
           </div>
-        </div>
 
-        <div class="section">
-          <h3>Behavior</h3>
-          <div class="toggle-row">
-            <input id="quitAfterSend" type="checkbox" />
-            <label for="quitAfterSend">Quit app after a message is sent </label>
+          <div class="section">
+            <h3>Behavior</h3>
+            <div class="toggle-row">
+              <input id="quitAfterSend" type="checkbox" />
+              <label for="quitAfterSend"
+                >Quit app after a message is sent
+              </label>
+            </div>
+            <div class="toggle-row">
+              <input id="allLowercase" type="checkbox" />
+              <label for="allLowercase">
+                Send dictated messages in all lowercase
+              </label>
+            </div>
           </div>
-          <div class="toggle-row">
-            <input id="allLowercase" type="checkbox" />
-            <label for="allLowercase">
-              Send dictated messages in all lowercase
-            </label>
-          </div>
-        </div>
 
-        <div class="section">
-          <h3>Contacts</h3>
+          <div class="section">
+            <h3>Contacts</h3>
 
-          <div id="contactsList" class="contact-list" role="list" aria-label="Contacts"></div>
-          <div id="contactsEmpty" class="help">
-            No contacts yet. Add one to get started.
+            <div
+              id="contactsList"
+              class="contact-list"
+              role="list"
+              aria-label="Contacts"
+            ></div>
+            <div id="contactsEmpty" class="help">
+              No contacts yet. Add one to get started.
+            </div>
+            <div class="btn-row" style="margin-top: 10px">
+              <button id="addContactButton" class="secondary" type="button">
+                Add Contact
+              </button>
+            </div>
           </div>
-          <div class="btn-row" style="margin-top: 10px">
-            <button id="addContactButton" class="secondary" type="button">
-              Add Contact
+
+          <div class="section">
+            <h3>Canned Messages</h3>
+            <div class="help">
+              Hold the middle button on a contact to select and send a canned
+              message.
+            </div>
+            <div
+              id="cannedList"
+              class="canned-list"
+              role="list"
+              aria-label="Canned messages"
+            ></div>
+            <div id="cannedEmpty" class="help">No canned messages yet.</div>
+            <div class="btn-row" style="margin-top: 10px">
+              <button id="addCannedButton" class="secondary" type="button">
+                Add Canned Message
+              </button>
+            </div>
+          </div>
+
+          <div class="btn-row section" style="padding-top: 18px">
+            <button id="saveButton" class="primary" type="button">Save</button>
+            <button id="cancelButton" class="secondary" type="button">
+              Cancel
             </button>
           </div>
-        </div>
-
-        <div class="section">
-          <h3>Canned Messages</h3>
-          <div class="help">
-            Hold the middle button on a contact to select and send a canned
-            message.
-          </div>
-          <div id="cannedList" class="canned-list" role="list" aria-label="Canned messages"></div>
-          <div id="cannedEmpty" class="help">No canned messages yet.</div>
-          <div class="btn-row" style="margin-top: 10px">
-            <button id="addCannedButton" class="secondary" type="button">
-              Add Canned Message
-            </button>
-          </div>
-        </div>
-
-        <div class="btn-row section" style="padding-top: 18px">
-          <button id="saveButton" class="primary" type="button">Save</button>
-          <button id="cancelButton" class="secondary" type="button">
-            Cancel
-          </button>
-        </div>
         </div>
       </details>
 
@@ -866,6 +892,10 @@
         <summary>Troubleshooting</summary>
         <div class="troubleshooting-content">
           <ul class="troubleshooting-list">
+            <li>
+              Automations will not run if your phone is on Low Power Mode. There
+              is no workaround.
+            </li>
             <li>
               After you log in to your Outlook account on this page, be sure to
               hit the <b>Save</b> button.
@@ -1335,17 +1365,6 @@
           status.innerHTML = text;
         }
 
-        function updateReturnLink() {
-          var payload = JSON.stringify(currentSettings);
-          var closeUrl = "pebblejs://close#" + encodeURIComponent(payload);
-          var returnBtn = document.getElementById("returnButton");
-          var hasReturnPayload =
-            currentSettings._authState === 1 ||
-            (currentSettings.graphAuth && currentSettings.graphAuth.code);
-          returnBtn.href = closeUrl;
-          returnBtn.style.display = hasReturnPayload ? "inline-block" : "none";
-        }
-
         function mergeBaseSettings(obj) {
           if (!obj || typeof obj !== "object") {
             return;
@@ -1598,15 +1617,9 @@
             JSON.stringify(currentSettings),
           );
 
-          updateReturnLink();
           renderAuthStatus();
 
-          // Auto-save after successful OAuth callback so the user doesn't have
-          // to scroll down and manually press Save. The form was already persisted
-          // to session draft before the OAuth redirect.
-          setAuthStatus("Sign-in complete. Returning to Pebble\u2026", true);
-          saveAndClose();
-          return;
+          setAuthStatus("Sign-in complete. Settings saved.", true);
 
           // Clean the URL after callback to avoid re-processing on refresh.
           if (window.history && window.history.replaceState) {
@@ -1778,7 +1791,6 @@
         loadSettings();
         initUI();
         renderAuthStatus();
-        updateReturnLink();
         maybeHandleOAuthCallback();
 
         // Persist collapsible section open/closed state
