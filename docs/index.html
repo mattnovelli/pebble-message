@@ -1522,6 +1522,7 @@
 
         function renderAuthStatus() {
           var signOutBtn = document.getElementById("signOutButton");
+          var loginBtn = document.getElementById("loginButton");
 
           if (currentSettings.graphAuth && currentSettings.graphAuth.code) {
             setAuthStatus(
@@ -1529,6 +1530,7 @@
               true,
             );
             if (signOutBtn) signOutBtn.style.display = "none";
+            if (loginBtn) loginBtn.style.display = "none";
             return;
           }
 
@@ -1539,6 +1541,7 @@
             // AUTH_STATE_OK
             setAuthStatus("Signed in.", true);
             if (signOutBtn) signOutBtn.style.display = "inline-block";
+            if (loginBtn) loginBtn.style.display = "none";
             return;
           }
 
@@ -1546,12 +1549,14 @@
             // AUTH_STATE_REAUTH_REQUIRED
             setAuthStatus("Session expired. Sign in again to continue.", false);
             if (signOutBtn) signOutBtn.style.display = "none";
+            if (loginBtn) loginBtn.style.display = "inline-block";
             return;
           }
 
           // Default: not signed in
           setAuthStatus("Not signed in.", false);
           if (signOutBtn) signOutBtn.style.display = "none";
+          if (loginBtn) loginBtn.style.display = "inline-block";
         }
 
         function handleSignOut() {
@@ -1618,13 +1623,8 @@
           );
 
           renderAuthStatus();
-
-          setAuthStatus("Sign-in complete. Settings saved.", true);
-
-          // Clean the URL after callback to avoid re-processing on refresh.
-          if (window.history && window.history.replaceState) {
-            window.history.replaceState({}, document.title, receiverUri());
-          }
+          setAuthStatus("Sign-in complete. Returning to Pebble\u2026", true);
+          saveAndClose();
         }
 
         function maybeHandleOAuthCallback() {
