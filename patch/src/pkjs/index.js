@@ -169,7 +169,8 @@ function buildDemoSettings() {
     }),
     targetEmail: DEMO_TARGET_EMAIL,
     quitAfterSend: false,
-    allLowercase: false
+    allLowercase: false,
+    removeTrailingPeriod: false
   };
 }
 
@@ -304,11 +305,13 @@ function handleAppMessage(e) {
 
 function formatOutgoingMessageText(messageText, settings) {
   var text = String(messageText || '');
-  if (!settings || !settings.allLowercase) {
-    return text;
+  if (settings && settings.removeTrailingPeriod) {
+    text = text.replace(/\.$/, '');
   }
-
-  return text.toLowerCase();
+  if (settings && settings.allLowercase) {
+    text = text.toLowerCase();
+  }
+  return text;
 }
 
 // Separate function to handle the actual email sending
@@ -596,7 +599,8 @@ function getSettingsLogSummary(settings) {
     hasAccessToken: !!graph.accessToken,
     hasRefreshToken: !!graph.refreshToken,
     quitAfterSend: !!s.quitAfterSend,
-    allLowercase: !!s.allLowercase
+    allLowercase: !!s.allLowercase,
+    removeTrailingPeriod: !!s.removeTrailingPeriod
   });
 }
 
@@ -626,7 +630,8 @@ function getSettings() {
       graph: normalizeGraphForStorage(parsed.graph),
       targetEmail: String(parsed.targetEmail || ''),
       quitAfterSend: !!parsed.quitAfterSend,
-      allLowercase: !!parsed.allLowercase
+      allLowercase: !!parsed.allLowercase,
+      removeTrailingPeriod: !!parsed.removeTrailingPeriod
     };
   } catch (e) {
     return {
@@ -635,7 +640,8 @@ function getSettings() {
       graph: normalizeGraphForStorage(null),
       targetEmail: '',
       quitAfterSend: false,
-      allLowercase: false
+      allLowercase: false,
+      removeTrailingPeriod: false
     };
   }
 }
@@ -649,7 +655,8 @@ function setSettings(s) {
     graph: normalizeGraphForStorage(source.graph),
     targetEmail: String(source.targetEmail || ''),
     quitAfterSend: !!source.quitAfterSend,
-    allLowercase: !!source.allLowercase
+    allLowercase: !!source.allLowercase,
+    removeTrailingPeriod: !!source.removeTrailingPeriod
   };
 
   localStorage.setItem('settings', JSON.stringify(normalized));
@@ -1019,7 +1026,8 @@ function buildConfigPageSettingsPayload(settings, authConfig) {
     },
     targetEmail: String(source.targetEmail || ''),
     quitAfterSend: !!source.quitAfterSend,
-    allLowercase: !!source.allLowercase
+    allLowercase: !!source.allLowercase,
+    removeTrailingPeriod: !!source.removeTrailingPeriod
   };
 }
 
@@ -1456,7 +1464,8 @@ function mergePersistedSettingsFromConfigResponse(newSettings) {
     graph: normalizeGraphForStorage(existingGraph),
     targetEmail: String(incoming.targetEmail || ''),
     quitAfterSend: !!incoming.quitAfterSend,
-    allLowercase: !!incoming.allLowercase
+    allLowercase: !!incoming.allLowercase,
+    removeTrailingPeriod: !!incoming.removeTrailingPeriod
   };
 
   merged.graph.clientId = nextClientId;
@@ -1488,6 +1497,7 @@ Pebble.addEventListener('webviewclosed', function(e) {
       var newSettings = JSON.parse(decodeURIComponent(e.response));
       newSettings.quitAfterSend = !!newSettings.quitAfterSend;
       newSettings.allLowercase = !!newSettings.allLowercase;
+      newSettings.removeTrailingPeriod = !!newSettings.removeTrailingPeriod;
 
       // Phase 2: Handle logout request from config page
       if (newSettings.logout) {
